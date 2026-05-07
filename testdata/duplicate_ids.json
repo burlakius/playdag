@@ -1,0 +1,22 @@
+{
+  "suite_id": "dup-suite",
+  "generated_at": "2026-05-07T00:00:00Z",
+  "nodes": [
+    {
+      "test_id": "auth.login",
+      "description": "First login",
+      "script": "tests/auth/login.spec.ts",
+      "contract": { "requires": [], "provides": [], "scope": "global" },
+      "policy": { "criticality": "BLOCKER", "retries": 0, "priority": 1, "timeout": "30s" },
+      "resources": { "tags": [] }
+    },
+    {
+      "test_id": "auth.login",
+      "description": "Duplicate login",
+      "script": "tests/auth/login2.spec.ts",
+      "contract": { "requires": [], "provides": [], "scope": "global" },
+      "policy": { "criticality": "BLOCKER", "retries": 0, "priority": 1, "timeout": "30s" },
+      "resources": { "tags": [] }
+    }
+  ]
+}

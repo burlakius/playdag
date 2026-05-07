@@ -1,0 +1,63 @@
+{
+  "suite_id": "e2e-smoke-v1",
+  "generated_at": "2026-05-07T00:00:00Z",
+  "nodes": [
+    {
+      "test_id": "auth.login",
+      "description": "Log in as a standard user",
+      "script": "tests/auth/login.spec.ts",
+      "contract": {
+        "requires": [],
+        "provides": ["session.token"],
+        "scope": "global"
+      },
+      "policy": {
+        "criticality": "BLOCKER",
+        "retries": 1,
+        "priority": 10,
+        "timeout": "30s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    },
+    {
+      "test_id": "card.create",
+      "description": "Create a new card",
+      "script": "tests/card/create.spec.ts",
+      "contract": {
+        "requires": ["session.token"],
+        "provides": ["card.id"],
+        "scope": "global"
+      },
+      "policy": {
+        "criticality": "BLOCKER",
+        "retries": 0,
+        "priority": 5,
+        "timeout": "60s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    },
+    {
+      "test_id": "card.archive",
+      "description": "Archive the created card",
+      "script": "tests/card/archive.spec.ts",
+      "contract": {
+        "requires": ["card.id"],
+        "provides": [],
+        "scope": "global"
+      },
+      "policy": {
+        "criticality": "NON_CRITICAL",
+        "retries": 2,
+        "priority": 1,
+        "timeout": "30s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    }
+  ]
+}

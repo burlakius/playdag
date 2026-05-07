@@ -1,0 +1,14 @@
+{
+  "suite_id": "bad-criticality-suite",
+  "generated_at": "2026-05-07T00:00:00Z",
+  "nodes": [
+    {
+      "test_id": "auth.login",
+      "description": "Login with bad criticality",
+      "script": "tests/auth/login.spec.ts",
+      "contract": { "requires": [], "provides": [], "scope": "global" },
+      "policy": { "criticality": "UNKNOWN", "retries": 0, "priority": 1, "timeout": "30s" },
+      "resources": { "tags": [] }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "suite_id": "missing-script-suite",
+  "generated_at": "2026-05-07T00:00:00Z",
+  "nodes": [
+    {
+      "test_id": "auth.login",
+      "description": "Login without a script path",
+      "script": "",
+      "contract": { "requires": [], "provides": [], "scope": "global" },
+      "policy": { "criticality": "BLOCKER", "retries": 0, "priority": 1, "timeout": "30s" },
+      "resources": { "tags": [] }
+    }
+  ]
+}
