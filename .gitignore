@@ -1,0 +1,24 @@
+# Build artifacts
+orchestrator
+*.exe
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Go
+*.mod~
+go.sum
+
+# Output directories
+logs/
+*.json
