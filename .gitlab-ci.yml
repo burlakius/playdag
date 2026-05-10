@@ -26,7 +26,7 @@ build-orchestrator:
   script:
     - go test ./... -v
     - go test -race ./...
-    - go build -o ../orchestrator ./cmd/orchestrator/
+    - go build -o ./orchestrator ./cmd/orchestrator/
     - echo "Build successful"
     - ./orchestrator --help || true
   artifacts:
