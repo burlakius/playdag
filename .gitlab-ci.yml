@@ -24,7 +24,6 @@ build-orchestrator:
   stage: build
   image: golang:1.22
   script:
-    - cd playdag
     - go test ./... -v
     - go test -race ./...
     - go build -o ../orchestrator ./cmd/orchestrator/
