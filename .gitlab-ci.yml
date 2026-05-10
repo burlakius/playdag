@@ -97,6 +97,8 @@ e2-sequential:
       done
 
     # Зводимо результати E2
+    - echo "=== DEBUG: e2_run_1.json structure ==="
+    - cat scrum-board/logs/experiment/e2_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e2_run_1.json
     - |
       python3 - << 'PYTHON'
       import json, glob, statistics, os
@@ -107,21 +109,30 @@ e2-sequential:
       for f in files:
           with open(f) as fp:
               data = json.load(fp)
-          dur = data.get("duration_seconds", data.get("total_duration_seconds", 0))
+          dur = (
+              data.get("duration_seconds") or
+              data.get("total_duration_seconds") or
+              data.get("DurationSeconds") or
+              data.get("duration") or
+              0.0
+          )
+          if isinstance(dur, str):
+              dur = float(dur.rstrip('s'))
           passed = data.get("passed", 0)
           total = data.get("total_tests", 0)
           durations.append(dur)
           print(f"  {os.path.basename(f)}: {dur:.2f}s  ({passed}/{total} passed)")
 
+      mean_val = statistics.mean(durations)
       summary = {
           "mode": "e2_sequential",
           "runs": len(durations),
           "durations_seconds": durations,
-          "mean": round(statistics.mean(durations), 3),
+          "mean": round(mean_val, 3),
           "stdev": round(statistics.stdev(durations), 3),
           "min": round(min(durations), 3),
           "max": round(max(durations), 3),
-          "cv_percent": round(statistics.stdev(durations) / statistics.mean(durations) * 100, 2),
+          "cv_percent": round(statistics.stdev(durations) / mean_val * 100, 2) if mean_val > 0 else 0,
       }
 
       with open("scrum-board/logs/experiment/e2_summary.json", "w") as f:
@@ -175,6 +186,8 @@ e3-parallel:
       done
 
     # Зводимо результати E3
+    - echo "=== DEBUG: e3_run_1.json structure ==="
+    - cat scrum-board/logs/experiment/e3_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e3_run_1.json
     - |
       python3 - << 'PYTHON'
       import json, glob, statistics, os
@@ -185,21 +198,30 @@ e3-parallel:
       for f in files:
           with open(f) as fp:
               data = json.load(fp)
-          dur = data.get("duration_seconds", data.get("total_duration_seconds", 0))
+          dur = (
+              data.get("duration_seconds") or
+              data.get("total_duration_seconds") or
+              data.get("DurationSeconds") or
+              data.get("duration") or
+              0.0
+          )
+          if isinstance(dur, str):
+              dur = float(dur.rstrip('s'))
           passed = data.get("passed", 0)
           total = data.get("total_tests", 0)
           durations.append(dur)
           print(f"  {os.path.basename(f)}: {dur:.2f}s  ({passed}/{total} passed)")
 
+      mean_val = statistics.mean(durations)
       summary = {
           "mode": "e3_parallel",
           "runs": len(durations),
           "durations_seconds": durations,
-          "mean": round(statistics.mean(durations), 3),
+          "mean": round(mean_val, 3),
           "stdev": round(statistics.stdev(durations), 3),
           "min": round(min(durations), 3),
           "max": round(max(durations), 3),
-          "cv_percent": round(statistics.stdev(durations) / statistics.mean(durations) * 100, 2),
+          "cv_percent": round(statistics.stdev(durations) / mean_val * 100, 2) if mean_val > 0 else 0,
       }
 
       with open("scrum-board/logs/experiment/e3_summary.json", "w") as f:
