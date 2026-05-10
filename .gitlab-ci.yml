@@ -275,11 +275,11 @@ compare-all:
       result = {
           "e2_mean": m2,
           "e3_mean": m3,
-          "speedup_S23_parallel": round(m2/m3, 3),
+          "speedup_S23_parallel": round(m2/m3, 3) if m3 > 0 else None,
           "t_statistic_E2_vs_E3": round(t23, 3),
           "t_critical_005": t_cr,
           "significant": abs(t23) > t_cr,
-          "efficiency_eta": round(7.40 / m3, 3),
+          "efficiency_eta": round(7.40 / m3, 3) if m3 > 0 else None,
       }
 
       with open("scrum-board/logs/experiment/comparison_e2_e3.json", "w") as f:
