@@ -97,8 +97,9 @@ e2-sequential:
       done
 
     # Зводимо результати E2
-    - echo "=== DEBUG: e2_run_1.json structure ==="
-    - cat scrum-board/logs/experiment/e2_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e2_run_1.json
+    - |
+      echo "=== DEBUG: e2_run_1.json structure ==="
+      cat scrum-board/logs/experiment/e2_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e2_run_1.json
     - |
       python3 - << 'PYTHON'
       import json, glob, statistics, os
@@ -186,8 +187,9 @@ e3-parallel:
       done
 
     # Зводимо результати E3
-    - echo "=== DEBUG: e3_run_1.json structure ==="
-    - cat scrum-board/logs/experiment/e3_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e3_run_1.json
+    - |
+      echo "=== DEBUG: e3_run_1.json structure ==="
+      cat scrum-board/logs/experiment/e3_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e3_run_1.json
     - |
       python3 - << 'PYTHON'
       import json, glob, statistics, os
