@@ -1,0 +1,285 @@
+stages:
+  - build
+  - experiment-e2
+  - experiment-e3
+  - compare
+
+variables:
+  SCRUM_REPO: "https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/andrii.burlaka.dev-group/andrii.burlaka.dev-project.git"
+  BASE_URL: "http://localhost:8000"
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+default:
+  tags:
+    - experiment
+
+cache:
+  key: "python-deps-v1"
+  paths:
+    - .cache/pip
+
+# ─── Stage 1: build orchestrator ──────────────────────────────────
+
+build-orchestrator:
+  stage: build
+  image: golang:1.22
+  script:
+    - cd playdag
+    - go test ./... -v
+    - go test -race ./...
+    - go build -o ../orchestrator ./cmd/orchestrator/
+    - echo "Build successful"
+    - ./orchestrator --help || true
+  artifacts:
+    name: "orchestrator-binary"
+    paths:
+      - orchestrator
+    expire_in: 1 hour
+
+# ─── Shared setup template ────────────────────────────────────────
+
+.setup-env: &setup-env
+  image: python:3.12
+  before_script:
+    # Клонуємо scrum-board
+    - git clone $SCRUM_REPO scrum-board
+    - cd scrum-board
+
+    # Встановлюємо залежності
+    - pip install -r requirements.txt --quiet
+    - pip install -r tests/requirements.txt --quiet
+    - playwright install chromium
+    - playwright install-deps chromium
+
+    # Готуємо БД
+    - python manage.py migrate --run-syncdb --no-input
+    - mkdir -p logs/experiment
+    - cd ..
+
+    # Перевіряємо оркестратор
+    - ls -la orchestrator
+    - chmod +x orchestrator
+
+# ─── Stage 2: E2 Sequential (only context sharing) ────────────────
+
+e2-sequential:
+  stage: experiment-e2
+  <<: *setup-env
+  needs: [build-orchestrator]
+  timeout: 40 minutes
+  script:
+    - |
+      for i in $(seq 1 10); do
+        echo ""
+        echo "========== E2 Sequential Run $i/10 =========="
+        cd scrum-board
+        python manage.py reset_test_db
+        python manage.py seed_test_data --users 1
+
+        # Запускаємо Django
+        python manage.py runserver 0.0.0.0:8000 &
+        SERVER_PID=$!
+        sleep 3
+        cd ..
+
+        # Запускаємо оркестратор workers=1
+        ./orchestrator \
+          -suite scrum-board/tests/suite.json \
+          -basedir scrum-board \
+          -baseurl http://localhost:8000 \
+          -workers 1 \
+          -report scrum-board/logs/experiment/e2_run_${i}.json \
+          -snapshot scrum-board/logs/experiment/e2_snapshot_${i}.json \
+          -timeout 300
+
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+        sleep 1
+      done
+
+    # Зводимо результати E2
+    - |
+      python3 - << 'PYTHON'
+      import json, glob, statistics, os
+
+      files = sorted(glob.glob("scrum-board/logs/experiment/e2_run_*.json"))
+      durations = []
+
+      for f in files:
+          with open(f) as fp:
+              data = json.load(fp)
+          dur = data.get("duration_seconds", data.get("total_duration_seconds", 0))
+          passed = data.get("passed", 0)
+          total = data.get("total_tests", 0)
+          durations.append(dur)
+          print(f"  {os.path.basename(f)}: {dur:.2f}s  ({passed}/{total} passed)")
+
+      summary = {
+          "mode": "e2_sequential",
+          "runs": len(durations),
+          "durations_seconds": durations,
+          "mean": round(statistics.mean(durations), 3),
+          "stdev": round(statistics.stdev(durations), 3),
+          "min": round(min(durations), 3),
+          "max": round(max(durations), 3),
+          "cv_percent": round(statistics.stdev(durations) / statistics.mean(durations) * 100, 2),
+      }
+
+      with open("scrum-board/logs/experiment/e2_summary.json", "w") as f:
+          json.dump(summary, f, indent=2)
+
+      print(f"\nE2 SEQUENTIAL SUMMARY")
+      print(f"Mean: {summary['mean']:.2f}s  StDev: {summary['stdev']:.3f}s  CV: {summary['cv_percent']:.1f}%")
+      PYTHON
+
+  artifacts:
+    name: "e2-sequential-results"
+    paths:
+      - scrum-board/logs/experiment/e2_run_*.json
+      - scrum-board/logs/experiment/e2_summary.json
+    expire_in: 7 days
+
+# ─── Stage 3: E3 Parallel (context sharing + parallelism) ─────────
+
+e3-parallel:
+  stage: experiment-e3
+  <<: *setup-env
+  needs: [build-orchestrator]
+  timeout: 40 minutes
+  script:
+    - |
+      for i in $(seq 1 10); do
+        echo ""
+        echo "========== E3 Parallel Run $i/10 =========="
+        cd scrum-board
+        python manage.py reset_test_db
+        python manage.py seed_test_data --users 1
+
+        python manage.py runserver 0.0.0.0:8000 &
+        SERVER_PID=$!
+        sleep 3
+        cd ..
+
+        # Запускаємо оркестратор workers=4
+        ./orchestrator \
+          -suite scrum-board/tests/suite.json \
+          -basedir scrum-board \
+          -baseurl http://localhost:8000 \
+          -workers 4 \
+          -report scrum-board/logs/experiment/e3_run_${i}.json \
+          -snapshot scrum-board/logs/experiment/e3_snapshot_${i}.json \
+          -timeout 300
+
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+        sleep 1
+      done
+
+    # Зводимо результати E3
+    - |
+      python3 - << 'PYTHON'
+      import json, glob, statistics, os
+
+      files = sorted(glob.glob("scrum-board/logs/experiment/e3_run_*.json"))
+      durations = []
+
+      for f in files:
+          with open(f) as fp:
+              data = json.load(fp)
+          dur = data.get("duration_seconds", data.get("total_duration_seconds", 0))
+          passed = data.get("passed", 0)
+          total = data.get("total_tests", 0)
+          durations.append(dur)
+          print(f"  {os.path.basename(f)}: {dur:.2f}s  ({passed}/{total} passed)")
+
+      summary = {
+          "mode": "e3_parallel",
+          "runs": len(durations),
+          "durations_seconds": durations,
+          "mean": round(statistics.mean(durations), 3),
+          "stdev": round(statistics.stdev(durations), 3),
+          "min": round(min(durations), 3),
+          "max": round(max(durations), 3),
+          "cv_percent": round(statistics.stdev(durations) / statistics.mean(durations) * 100, 2),
+      }
+
+      with open("scrum-board/logs/experiment/e3_summary.json", "w") as f:
+          json.dump(summary, f, indent=2)
+
+      print(f"\nE3 PARALLEL SUMMARY")
+      print(f"Mean: {summary['mean']:.2f}s  StDev: {summary['stdev']:.3f}s  CV: {summary['cv_percent']:.1f}%")
+      PYTHON
+
+  artifacts:
+    name: "e3-parallel-results"
+    paths:
+      - scrum-board/logs/experiment/e3_run_*.json
+      - scrum-board/logs/experiment/e3_summary.json
+    expire_in: 7 days
+
+# ─── Stage 4: Statistical comparison ──────────────────────────────
+
+compare-all:
+  stage: compare
+  image: python:3.12
+  needs: [e2-sequential, e3-parallel]
+  script:
+    - pip install scipy numpy --quiet
+    - |
+      python3 - << 'PYTHON'
+      import json, math, statistics
+
+      def load(path):
+          with open(path) as f:
+              return json.load(f)
+
+      def t_test(a, b):
+          n = len(a)
+          ma, mb = statistics.mean(a), statistics.mean(b)
+          va, vb = statistics.variance(a), statistics.variance(b)
+          se = math.sqrt(va/n + vb/n)
+          return (ma - mb) / se if se > 0 else 0
+
+      e2 = load("scrum-board/logs/experiment/e2_summary.json")
+      e3 = load("scrum-board/logs/experiment/e3_summary.json")
+
+      m2 = e2["mean"]
+      m3 = e3["mean"]
+
+      t23 = t_test(e2["durations_seconds"], e3["durations_seconds"])
+      t_cr = 2.101  # df=18, alpha=0.05
+
+      result = {
+          "e2_mean": m2,
+          "e3_mean": m3,
+          "speedup_S23_parallel": round(m2/m3, 3),
+          "t_statistic_E2_vs_E3": round(t23, 3),
+          "t_critical_005": t_cr,
+          "significant": abs(t23) > t_cr,
+          "efficiency_eta": round(7.40 / m3, 3),
+      }
+
+      with open("scrum-board/logs/experiment/comparison_e2_e3.json", "w") as f:
+          json.dump(result, f, indent=2)
+
+      print("=" * 55)
+      print("STATISTICAL COMPARISON E2 vs E3")
+      print("=" * 55)
+      print(f"E2 Sequential mean: {m2:.2f}s")
+      print(f"E3 Parallel mean:   {m3:.2f}s")
+      print(f"Speedup S23:        {result['speedup_S23_parallel']:.2f}x")
+      print(f"t-statistic:        {result['t_statistic_E2_vs_E3']:.3f}")
+      print(f"t-critical (0.05):  {t_cr}")
+      sig = "✓ SIGNIFICANT" if result["significant"] else "✗ NOT SIGNIFICANT"
+      print(f"Result:             {sig}")
+      print(f"Efficiency η:       {result['efficiency_eta']:.3f}")
+      print("=" * 55)
+      PYTHON
+
+  artifacts:
+    name: "experiment-final-results"
+    paths:
+      - scrum-board/logs/experiment/e2_summary.json
+      - scrum-board/logs/experiment/e3_summary.json
+      - scrum-board/logs/experiment/comparison_e2_e3.json
+    expire_in: 30 days
