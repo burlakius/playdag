@@ -110,15 +110,7 @@ e2-sequential:
       for f in files:
           with open(f) as fp:
               data = json.load(fp)
-          dur = (
-              data.get("duration_seconds") or
-              data.get("total_duration_seconds") or
-              data.get("DurationSeconds") or
-              data.get("duration") or
-              0.0
-          )
-          if isinstance(dur, str):
-              dur = float(dur.rstrip('s'))
+          dur = data.get("total_duration_ms", 0) / 1000
           passed = data.get("passed", 0)
           total = data.get("total_tests", 0)
           durations.append(dur)
@@ -200,15 +192,7 @@ e3-parallel:
       for f in files:
           with open(f) as fp:
               data = json.load(fp)
-          dur = (
-              data.get("duration_seconds") or
-              data.get("total_duration_seconds") or
-              data.get("DurationSeconds") or
-              data.get("duration") or
-              0.0
-          )
-          if isinstance(dur, str):
-              dur = float(dur.rstrip('s'))
+          dur = data.get("total_duration_ms", 0) / 1000
           passed = data.get("passed", 0)
           total = data.get("total_tests", 0)
           durations.append(dur)
@@ -288,14 +272,16 @@ compare-all:
       print("=" * 55)
       print("STATISTICAL COMPARISON E2 vs E3")
       print("=" * 55)
+      speedup = result['speedup_S23_parallel']
+      eta = result['efficiency_eta']
       print(f"E2 Sequential mean: {m2:.2f}s")
       print(f"E3 Parallel mean:   {m3:.2f}s")
-      print(f"Speedup S23:        {result['speedup_S23_parallel']:.2f}x")
+      print(f"Speedup S23:        {f'{speedup:.2f}x' if speedup is not None else 'N/A'}")
       print(f"t-statistic:        {result['t_statistic_E2_vs_E3']:.3f}")
       print(f"t-critical (0.05):  {t_cr}")
       sig = "✓ SIGNIFICANT" if result["significant"] else "✗ NOT SIGNIFICANT"
       print(f"Result:             {sig}")
-      print(f"Efficiency η:       {result['efficiency_eta']:.3f}")
+      print(f"Efficiency η:       {f'{eta:.3f}' if eta is not None else 'N/A'}")
       print("=" * 55)
       PYTHON
 
