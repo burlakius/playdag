@@ -15,6 +15,7 @@ import (
 
 	"playdag/internal/graph"
 	"playdag/internal/loader"
+	"playdag/internal/scheduler"
 	"playdag/internal/store"
 )
 
@@ -29,10 +30,11 @@ type AgentResult struct {
 
 // RunOptions configures runner behaviour.
 type RunOptions struct {
-	MaxConcurrency int    // 0 → 64 (effectively unlimited for test suites)
-	BaseDir        string // working directory for python scripts
-	BaseURL        string // passed as BASE_URL env var to agents
-	JSONLog        bool   // emit one JSON object per log event instead of text
+	MaxConcurrency int                // 0 → 64 (effectively unlimited for test suites)
+	BaseDir        string             // working directory for python scripts
+	BaseURL        string             // passed as BASE_URL env var to agents
+	JSONLog        bool               // emit one JSON object per log event instead of text
+	Agents         []*scheduler.Agent // explicit agent pool; empty → MaxConcurrency universal agents
 }
 
 // Runner drives the DAG to completion, launching each node as a subprocess.
@@ -40,7 +42,8 @@ type Runner struct {
 	store   *store.ContextStore
 	dag     *graph.DAG
 	opts    RunOptions
-	sem     chan struct{}
+	sched   *scheduler.Scheduler
+	agents  int
 	wg      sync.WaitGroup
 	mu      sync.Mutex
 	results map[string]AgentResult
@@ -49,17 +52,31 @@ type Runner struct {
 
 // NewRunner creates a Runner ready to execute.
 func NewRunner(dag *graph.DAG, store *store.ContextStore, opts RunOptions) *Runner {
-	concurrency := opts.MaxConcurrency
-	if concurrency <= 0 {
-		concurrency = 64
+	agents := opts.Agents
+	if len(agents) == 0 {
+		agents = defaultAgents(dag.AllTags(), opts.MaxConcurrency)
 	}
 	return &Runner{
 		dag:     dag,
 		store:   store,
 		opts:    opts,
-		sem:     make(chan struct{}, concurrency),
+		sched:   scheduler.New(agents, dag.CriticalPath()),
+		agents:  len(agents),
 		results: make(map[string]AgentResult),
 	}
+}
+
+// defaultAgents builds n interchangeable agents that advertise every tag in the
+// suite, so any node has a matching agent. n <= 0 falls back to 64.
+func defaultAgents(tags []string, n int) []*scheduler.Agent {
+	if n <= 0 {
+		n = 64
+	}
+	agents := make([]*scheduler.Agent, n)
+	for i := range agents {
+		agents[i] = &scheduler.Agent{Name: fmt.Sprintf("agent-%d", i+1), Tags: tags}
+	}
+	return agents
 }
 
 // Results returns a copy of all collected AgentResults, keyed by test_id.
@@ -76,48 +93,62 @@ func (r *Runner) Results() map[string]AgentResult {
 // nodeCompletion carries the outcome of a finished goroutine back to Run.
 type nodeCompletion struct {
 	node   *loader.TestNode
+	agent  *scheduler.Agent
 	result AgentResult
 }
 
 // Run drives the orchestration loop until every node reaches a terminal state
-// or ctx is cancelled. It is safe to call once per Runner.
+// or ctx is cancelled. Ready nodes are taken from the scheduler, so at a given
+// concurrency the execution order is reproducible. It is safe to call once.
 func (r *Runner) Run(ctx context.Context) error {
-	// Buffer = semaphore capacity: at most that many goroutines can finish and
-	// signal simultaneously before the main loop drains them.
-	done := make(chan nodeCompletion, cap(r.sem))
+	// Buffer covers every agent so a finishing goroutine never blocks on send,
+	// even while the main loop sits in wg.Wait during cancellation.
+	done := make(chan nodeCompletion, r.agents)
 	inFlight := 0
 
-	dispatch := func(nodes []*loader.TestNode) {
-		for _, n := range nodes {
-			r.dag.MarkRunning(n.TestID)
-			inFlight++
-			r.wg.Add(1)
-			n := n
-			go func() {
-				defer r.wg.Done()
-				r.sem <- struct{}{} // acquire slot
-				result := r.runNode(ctx, n)
-				<-r.sem // release slot before notifying
-				done <- nodeCompletion{node: n, result: result}
-			}()
-		}
+	for _, n := range r.dag.ReadyNodes() {
+		r.sched.Push(n)
 	}
 
-	dispatch(r.dag.ReadyNodes())
+	for {
+		for {
+			node, agent, ok := r.sched.Next()
+			if !ok {
+				break
+			}
+			r.dag.MarkRunning(node.TestID)
+			inFlight++
+			r.wg.Add(1)
+			go func() {
+				defer r.wg.Done()
+				result := r.runNode(ctx, node)
+				done <- nodeCompletion{node: node, agent: agent, result: result}
+			}()
+		}
 
-	for inFlight > 0 {
+		if inFlight == 0 {
+			if r.sched.Pending() == 0 {
+				return nil
+			}
+			return fmt.Errorf("runner: %d node(s) cannot be scheduled on any agent (tags: %v)",
+				r.sched.Pending(), r.sched.PendingTags())
+		}
+
 		select {
 		case <-ctx.Done():
 			r.wg.Wait()
 			return ctx.Err()
 		case c := <-done:
 			inFlight--
+			r.sched.Release(c.agent)
 			r.mu.Lock()
 			r.results[c.node.TestID] = c.result
 			r.mu.Unlock()
 
 			if c.result.Status == "PASSED" {
-				dispatch(r.dag.MarkPassed(c.node.TestID))
+				for _, n := range r.dag.MarkPassed(c.node.TestID) {
+					r.sched.Push(n)
+				}
 			} else {
 				skipped := r.dag.MarkFailed(c.node.TestID)
 				for _, sid := range skipped {
@@ -129,8 +160,6 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 		}
 	}
-
-	return nil
 }
 
 // runNode executes a single node with retries and writes its provides into the
