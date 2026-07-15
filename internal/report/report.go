@@ -129,16 +129,50 @@ func section(title string) string {
 	return "── " + title + " " + strings.Repeat("─", fill) + "\n"
 }
 
-// SaveJSON serialises the report to a JSON file for downstream analysis.
+// SaveJSON serialises the report to a JSON file for downstream analysis. The
+// top-level aggregate fields (total_tests, passed, worker_seconds, …) are the
+// ones consumed by the CI experiment scripts.
 func SaveJSON(r *Report, path string) error {
+	type nodeResult struct {
+		Status     string            `json:"status"`
+		DurationMs float64           `json:"duration_ms"`
+		Error      string            `json:"error,omitempty"`
+		Provides   map[string]string `json:"provides,omitempty"`
+	}
 	type jsonReport struct {
 		SuiteID         string                        `json:"suite_id"`
 		StartedAt       time.Time                     `json:"started_at"`
 		FinishedAt      time.Time                     `json:"finished_at"`
 		TotalDurationMs float64                       `json:"total_duration_ms"`
-		Results         map[string]runner.AgentResult `json:"results"`
-		ContextSnapshot map[string]store.ContextValue  `json:"context_snapshot"`
+		TotalTests      int                           `json:"total_tests"`
+		Passed          int                           `json:"passed"`
+		Failed          int                           `json:"failed"`
+		Skipped         int                           `json:"skipped"`
+		WorkerSeconds   float64                       `json:"worker_seconds"`
+		Results         map[string]nodeResult         `json:"results"`
+		ContextSnapshot map[string]store.ContextValue `json:"context_snapshot"`
 		NodeOrder       []string                      `json:"node_order"`
+	}
+
+	results := make(map[string]nodeResult, len(r.Results))
+	var passed, failed, skipped int
+	var workerSeconds float64
+	for id, res := range r.Results {
+		results[id] = nodeResult{
+			Status:     res.Status,
+			DurationMs: res.Duration.Seconds() * 1000,
+			Error:      res.Error,
+			Provides:   res.Provides,
+		}
+		workerSeconds += res.Duration.Seconds()
+		switch res.Status {
+		case "PASSED":
+			passed++
+		case "FAILED":
+			failed++
+		case "SKIPPED":
+			skipped++
+		}
 	}
 
 	payload := jsonReport{
@@ -146,7 +180,12 @@ func SaveJSON(r *Report, path string) error {
 		StartedAt:       r.StartedAt,
 		FinishedAt:      r.FinishedAt,
 		TotalDurationMs: r.TotalDuration.Seconds() * 1000,
-		Results:         r.Results,
+		TotalTests:      len(r.NodeOrder),
+		Passed:          passed,
+		Failed:          failed,
+		Skipped:         skipped,
+		WorkerSeconds:   workerSeconds,
+		Results:         results,
 		ContextSnapshot: r.ContextSnapshot,
 		NodeOrder:       r.NodeOrder,
 	}

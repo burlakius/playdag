@@ -1,6 +1,9 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,13 +16,13 @@ var t0 = time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 
 func baseReport() *Report {
 	return &Report{
-		SuiteID:       "test_suite",
-		StartedAt:     t0,
-		FinishedAt:    t0.Add(4 * time.Second),
-		TotalDuration: 4 * time.Second,
-		Results:       map[string]runner.AgentResult{},
+		SuiteID:         "test_suite",
+		StartedAt:       t0,
+		FinishedAt:      t0.Add(4 * time.Second),
+		TotalDuration:   4 * time.Second,
+		Results:         map[string]runner.AgentResult{},
 		ContextSnapshot: map[string]store.ContextValue{},
-		NodeOrder:     []string{},
+		NodeOrder:       []string{},
 	}
 }
 
@@ -75,11 +78,55 @@ func TestGenerate_SpeedupCalculation(t *testing.T) {
 	}
 }
 
+func TestSaveJSON_AggregateFields(t *testing.T) {
+	r := baseReport()
+	r.Results = map[string]runner.AgentResult{
+		"a": {Status: "PASSED", Duration: 2 * time.Second, Provides: map[string]string{"a.out": "1"}},
+		"b": {Status: "FAILED", Duration: 1 * time.Second, Error: "boom"},
+		"c": {Status: "SKIPPED", Error: "blocked by: b"},
+	}
+	r.NodeOrder = []string{"a", "b", "c"}
+
+	path := filepath.Join(t.TempDir(), "report.json")
+	if err := SaveJSON(r, path); err != nil {
+		t.Fatalf("SaveJSON: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+
+	var got struct {
+		TotalTests    int     `json:"total_tests"`
+		Passed        int     `json:"passed"`
+		Failed        int     `json:"failed"`
+		Skipped       int     `json:"skipped"`
+		WorkerSeconds float64 `json:"worker_seconds"`
+		Results       map[string]struct {
+			DurationMs float64 `json:"duration_ms"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got.TotalTests != 3 || got.Passed != 1 || got.Failed != 1 || got.Skipped != 1 {
+		t.Fatalf("unexpected counts: %+v", got)
+	}
+	if got.WorkerSeconds != 3 {
+		t.Errorf("worker_seconds: want 3, got %v", got.WorkerSeconds)
+	}
+	if got.Results["a"].DurationMs != 2000 {
+		t.Errorf("a duration_ms: want 2000, got %v", got.Results["a"].DurationMs)
+	}
+}
+
 func TestGenerate_SkippedShowsBlockedBy(t *testing.T) {
 	r := baseReport()
 	r.Results = map[string]runner.AgentResult{
-		"auth.login":   {Status: "FAILED", Error: "timeout"},
-		"card.create":  {Status: "SKIPPED", Error: "blocked by: auth.login"},
+		"auth.login":  {Status: "FAILED", Error: "timeout"},
+		"card.create": {Status: "SKIPPED", Error: "blocked by: auth.login"},
 	}
 	r.NodeOrder = []string{"auth.login", "card.create"}
 
