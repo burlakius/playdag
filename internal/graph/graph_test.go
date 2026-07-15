@@ -138,6 +138,47 @@ func TestMarkFailed_NonCriticalSkipsDependants(t *testing.T) {
 	}
 }
 
+func TestCriticalPath_DiamondAndChain(t *testing.T) {
+	nodes := []loader.TestNode{
+		node("A", "BLOCKER", nil, []string{"a"}),
+		node("B", "BLOCKER", []string{"a"}, []string{"b"}),
+		node("C", "BLOCKER", []string{"a"}, []string{"c"}),
+		node("D", "BLOCKER", []string{"b", "c"}, nil),
+	}
+	dag, err := NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cp := dag.CriticalPath()
+	want := map[string]int{"A": 3, "B": 2, "C": 2, "D": 1}
+	for id, w := range want {
+		if cp[id] != w {
+			t.Errorf("critical path %s: want %d, got %d", id, w, cp[id])
+		}
+	}
+}
+
+func TestAllTags_DistinctSorted(t *testing.T) {
+	nodes := []loader.TestNode{
+		node("A", "BLOCKER", nil, []string{"a"}),
+		node("B", "BLOCKER", []string{"a"}, nil),
+	}
+	nodes[0].Resources.Tags = []string{"firefox", "chromium"}
+	nodes[1].Resources.Tags = []string{"chromium"}
+
+	dag, err := NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := dag.AllTags()
+	want := []string{"chromium", "firefox"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("AllTags: want %v, got %v", want, got)
+	}
+}
+
 func TestNewDAG_DuplicateProvides(t *testing.T) {
 	nodes := []loader.TestNode{
 		node("A", "BLOCKER", nil, []string{"shared"}),

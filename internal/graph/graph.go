@@ -3,6 +3,7 @@ package graph
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -220,4 +221,53 @@ func (d *DAG) Summary() map[string]int {
 		}
 	}
 	return out
+}
+
+// CriticalPath returns, for each node, the length of the longest chain of
+// dependants rooted at that node, counting the node itself. Sinks have length 1.
+// The scheduler uses it as a tie-breaker so nodes on longer downstream chains
+// start earlier (list-scheduling heuristic, cf. Schmid & Mottok).
+func (d *DAG) CriticalPath() map[string]int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	memo := make(map[string]int, len(d.nodes))
+	var longest func(id string) int
+	longest = func(id string) int {
+		if v, ok := memo[id]; ok {
+			return v
+		}
+		best := 0
+		for _, dep := range d.edges[id] {
+			if c := longest(dep); c > best {
+				best = c
+			}
+		}
+		memo[id] = best + 1
+		return memo[id]
+	}
+	for id := range d.nodes {
+		longest(id)
+	}
+	return memo
+}
+
+// AllTags returns the sorted set of distinct resource tags declared across the
+// suite. It seeds the default agent pool so that every node has a matching agent.
+func (d *DAG) AllTags() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	seen := make(map[string]bool)
+	var tags []string
+	for _, n := range d.nodes {
+		for _, t := range n.Resources.Tags {
+			if !seen[t] {
+				seen[t] = true
+				tags = append(tags, t)
+			}
+		}
+	}
+	sort.Strings(tags)
+	return tags
 }
