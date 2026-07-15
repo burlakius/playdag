@@ -17,8 +17,6 @@ orchestrator
 
 # Go
 *.mod~
-go.sum
 
 # Output directories
 logs/
-*.json
