@@ -13,6 +13,7 @@ import (
 	"playdag/internal/loader"
 	"playdag/internal/report"
 	"playdag/internal/runner"
+	"playdag/internal/scheduler"
 	"playdag/internal/store"
 )
 
@@ -25,6 +26,7 @@ func main() {
 	reportFlag   := flag.String("report",   "logs/report.json",            "path for JSON report output")
 	timeoutFlag  := flag.Int("timeout",     300,                           "global timeout in seconds")
 	jsonFlag     := flag.Bool("json",       false,                         "emit machine-readable JSON event log")
+	agentsFlag   := flag.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
 	flag.Parse()
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -48,12 +50,19 @@ func main() {
 		}
 	}
 
+	agents, err := scheduler.ParseAgents(*agentsFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	s := store.NewContextStore(*snapshotFlag)
 	r := runner.NewRunner(dag, s, runner.RunOptions{
 		MaxConcurrency: *workersFlag,
 		BaseDir:        *basedirFlag,
 		BaseURL:        *baseurlFlag,
 		JSONLog:        *jsonFlag,
+		Agents:         agents,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)
