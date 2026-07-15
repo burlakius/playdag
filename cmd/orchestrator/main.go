@@ -24,6 +24,7 @@ func main() {
 	snapshotFlag := flag.String("snapshot", "logs/context-snapshot.json",  "path for context snapshot JSON")
 	reportFlag   := flag.String("report",   "logs/report.json",            "path for JSON report output")
 	timeoutFlag  := flag.Int("timeout",     300,                           "global timeout in seconds")
+	jsonFlag     := flag.Bool("json",       false,                         "emit machine-readable JSON event log")
 	flag.Parse()
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -52,6 +53,7 @@ func main() {
 		MaxConcurrency: *workersFlag,
 		BaseDir:        *basedirFlag,
 		BaseURL:        *baseurlFlag,
+		JSONLog:        *jsonFlag,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)
@@ -80,7 +82,13 @@ func main() {
 		NodeOrder:       nodeOrder,
 	}
 
-	fmt.Print(report.Generate(rep))
+	// In JSON mode stdout carries only the event stream; the boxed summary goes
+	// to stderr so the two never mix.
+	if *jsonFlag {
+		fmt.Fprint(os.Stderr, report.Generate(rep))
+	} else {
+		fmt.Print(report.Generate(rep))
+	}
 
 	if err := report.SaveJSON(rep, *reportFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: save report: %v\n", err)

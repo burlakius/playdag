@@ -21,7 +21,7 @@ import (
 // AgentResult is the JSON payload returned by a python agent on stdout.
 // Duration is populated by the runner after execution (not part of the agent protocol).
 type AgentResult struct {
-	Status   string            `json:"status"`              // "PASSED", "FAILED", or "SKIPPED"
+	Status   string            `json:"status"` // "PASSED", "FAILED", or "SKIPPED"
 	Provides map[string]string `json:"provides"`
 	Error    string            `json:"error"`
 	Duration time.Duration     `json:"duration_ns,omitempty"` // total node time including retries
@@ -32,6 +32,7 @@ type RunOptions struct {
 	MaxConcurrency int    // 0 → 64 (effectively unlimited for test suites)
 	BaseDir        string // working directory for python scripts
 	BaseURL        string // passed as BASE_URL env var to agents
+	JSONLog        bool   // emit one JSON object per log event instead of text
 }
 
 // Runner drives the DAG to completion, launching each node as a subprocess.
@@ -43,6 +44,7 @@ type Runner struct {
 	wg      sync.WaitGroup
 	mu      sync.Mutex
 	results map[string]AgentResult
+	logMu   sync.Mutex
 }
 
 // NewRunner creates a Runner ready to execute.
@@ -93,9 +95,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			n := n
 			go func() {
 				defer r.wg.Done()
-				r.sem <- struct{}{}        // acquire slot
+				r.sem <- struct{}{} // acquire slot
 				result := r.runNode(ctx, n)
-				<-r.sem                    // release slot before notifying
+				<-r.sem // release slot before notifying
 				done <- nodeCompletion{node: n, result: result}
 			}()
 		}
@@ -119,7 +121,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			} else {
 				skipped := r.dag.MarkFailed(c.node.TestID)
 				for _, sid := range skipped {
-					logLine("SKIP", sid, "blocked by: "+c.node.TestID)
+					r.log("SKIP", sid, "blocked by: "+c.node.TestID)
 					r.mu.Lock()
 					r.results[sid] = AgentResult{Status: "SKIPPED", Error: "blocked by: " + c.node.TestID}
 					r.mu.Unlock()
@@ -142,14 +144,14 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 
 	var result AgentResult
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		logLine("RUN", node.TestID, fmt.Sprintf("attempt %d/%d", attempt, maxAttempts))
+		r.log("RUN", node.TestID, fmt.Sprintf("attempt %d/%d", attempt, maxAttempts))
 		attemptStart := time.Now()
 		result = r.execNode(ctx, node)
 		attemptElapsed := time.Since(attemptStart)
 
 		if result.Status == "PASSED" {
 			result.Duration = time.Since(nodeStart)
-			logLine("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
+			r.log("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
 			for k, v := range result.Provides {
 				r.store.Set(k, v, node.TestID, node.Contract.Scope)
 			}
@@ -158,7 +160,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 	}
 
 	result.Duration = time.Since(nodeStart)
-	logLine("FAIL", node.TestID, result.Error)
+	r.log("FAIL", node.TestID, result.Error)
 	return result
 }
 
@@ -260,8 +262,26 @@ func parseAgentResult(output []byte) (AgentResult, error) {
 	}, nil
 }
 
-// logLine emits a single structured log line to stdout.
-func logLine(tag, testID, detail string) {
+// log emits a single execution event to stdout, either as a human-readable line
+// or, when JSONLog is set, as one JSON object per line. The lock keeps lines
+// from interleaving across concurrent node goroutines.
+func (r *Runner) log(tag, testID, detail string) {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
+
+	if r.opts.JSONLog {
+		ev := struct {
+			Time   string `json:"time"`
+			Event  string `json:"event"`
+			TestID string `json:"test_id"`
+			Detail string `json:"detail,omitempty"`
+		}{time.Now().Format(time.RFC3339), tag, testID, detail}
+		if b, err := json.Marshal(ev); err == nil {
+			fmt.Println(string(b))
+		}
+		return
+	}
+
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	// %-6s pads [RUN] (5 chars) to 6, matching [PASS]/[FAIL]/[SKIP] (6 chars) visually.
 	fmt.Printf("[%s] %-6s %-20s %s\n", ts, "["+tag+"]", testID, detail)
