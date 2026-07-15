@@ -117,7 +117,7 @@ func (r *Runner) Run(ctx context.Context) error {
 			if c.result.Status == "PASSED" {
 				dispatch(r.dag.MarkPassed(c.node.TestID))
 			} else {
-				skipped := r.dag.MarkFailed(c.node.TestID, c.node.Policy.Criticality)
+				skipped := r.dag.MarkFailed(c.node.TestID)
 				for _, sid := range skipped {
 					logLine("SKIP", sid, "blocked by: "+c.node.TestID)
 					r.mu.Lock()

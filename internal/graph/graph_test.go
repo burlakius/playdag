@@ -95,7 +95,7 @@ func TestMarkFailed_BlockerSkipsDependants(t *testing.T) {
 	}
 
 	dag.MarkRunning("A")
-	skipped := dag.MarkFailed("A", "BLOCKER")
+	skipped := dag.MarkFailed("A")
 	sort.Strings(skipped)
 
 	if len(skipped) != 2 || skipped[0] != "B" || skipped[1] != "C" {
@@ -111,7 +111,7 @@ func TestMarkFailed_BlockerSkipsDependants(t *testing.T) {
 	}
 }
 
-func TestMarkFailed_NonCriticalNoSkip(t *testing.T) {
+func TestMarkFailed_NonCriticalSkipsDependants(t *testing.T) {
 	nodes := []loader.TestNode{
 		node("A", "NON_CRITICAL", nil, []string{"a_out"}),
 		node("B", "NON_CRITICAL", []string{"a_out"}, nil),
@@ -122,17 +122,33 @@ func TestMarkFailed_NonCriticalNoSkip(t *testing.T) {
 	}
 
 	dag.MarkRunning("A")
-	skipped := dag.MarkFailed("A", "NON_CRITICAL")
-	if len(skipped) != 0 {
-		t.Fatalf("expected no skips for NON_CRITICAL, got %v", skipped)
+	skipped := dag.MarkFailed("A")
+	if len(skipped) != 1 || skipped[0] != "B" {
+		t.Fatalf("expected B skipped, got %v", skipped)
 	}
 
 	dag.mu.RLock()
 	bStatus := dag.status["B"]
 	dag.mu.RUnlock()
-	// B's inDegree is still 1, so it stays pending (not skipped).
-	if bStatus != StatusPending {
-		t.Fatalf("B should remain pending, got %v", bStatus)
+	if bStatus != StatusSkipped {
+		t.Fatalf("B should be skipped, got %v", bStatus)
+	}
+	if !dag.AllDone() {
+		t.Fatal("suite should be done: A failed, B skipped, none left pending")
+	}
+}
+
+func TestNewDAG_DuplicateProvides(t *testing.T) {
+	nodes := []loader.TestNode{
+		node("A", "BLOCKER", nil, []string{"shared"}),
+		node("B", "BLOCKER", nil, []string{"shared"}),
+	}
+	_, err := NewDAG(nodes)
+	if err == nil {
+		t.Fatal("expected error for duplicate provides, got nil")
+	}
+	if !strings.Contains(err.Error(), "shared") {
+		t.Fatalf("expected key name in error, got: %v", err)
 	}
 }
 

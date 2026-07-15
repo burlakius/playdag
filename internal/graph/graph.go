@@ -48,10 +48,14 @@ func NewDAG(nodes []loader.TestNode) (*DAG, error) {
 		d.status[n.TestID] = StatusPending
 	}
 
-	// Build a map from provided key → node_id that produces it.
+	// Build a map from provided key → node_id that produces it. A key may have
+	// exactly one provider; a collision means the suite is ambiguous.
 	providers := make(map[string]string)
 	for _, n := range nodes {
 		for _, key := range n.Contract.Provides {
+			if owner, taken := providers[key]; taken {
+				return nil, fmt.Errorf("key %q provided by both %q and %q", key, owner, n.TestID)
+			}
 			providers[key] = n.TestID
 		}
 	}
@@ -155,20 +159,15 @@ func (d *DAG) MarkPassed(testID string) []*loader.TestNode {
 	return newlyReady
 }
 
-// MarkFailed transitions a node to StatusFailed. For BLOCKER criticality it
-// performs a BFS over the dependency graph, marks all reachable nodes as
-// StatusSkipped, and returns their IDs.
-func (d *DAG) MarkFailed(testID string, criticality string) []string {
+// MarkFailed transitions a node to StatusFailed and marks every node reachable
+// from it as StatusSkipped: a failed node never wrote its provided keys, so its
+// dependants can no longer satisfy their contracts. It returns the skipped IDs.
+func (d *DAG) MarkFailed(testID string) []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
 	d.status[testID] = StatusFailed
 
-	if criticality != "BLOCKER" {
-		return nil
-	}
-
-	// BFS from testID through d.edges to collect all downstream nodes.
 	visited := make(map[string]bool)
 	queue := []string{testID}
 	var skipped []string
