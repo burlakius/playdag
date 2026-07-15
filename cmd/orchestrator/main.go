@@ -61,6 +61,10 @@ func main() {
 	runErr := r.Run(ctx)
 	finishedAt := time.Now()
 
+	if err := s.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: flush snapshot: %v\n", err)
+	}
+
 	nodeOrder := make([]string, len(suite.Nodes))
 	for i, n := range suite.Nodes {
 		nodeOrder[i] = n.TestID

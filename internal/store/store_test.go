@@ -12,9 +12,7 @@ import (
 func TestSetAndGet(t *testing.T) {
 	s := NewContextStore("")
 
-	if err := s.Set("auth.token", "tok123", "auth.login", "session"); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
+	s.Set("auth.token", "tok123", "auth.login", "session")
 
 	v, ok := s.Get("auth.token")
 	if !ok {
@@ -32,7 +30,7 @@ func TestSetAndGet(t *testing.T) {
 
 func TestCollect_MissingKey(t *testing.T) {
 	s := NewContextStore("")
-	s.Set("a", "1", "nodeA", "session") //nolint:errcheck
+	s.Set("a", "1", "nodeA", "session")
 
 	_, err := s.Collect([]string{"a", "b"})
 	if err == nil {
@@ -46,8 +44,8 @@ func TestCollect_MissingKey(t *testing.T) {
 
 func TestCollect_AllPresent(t *testing.T) {
 	s := NewContextStore("")
-	s.Set("x", "1", "n1", "session") //nolint:errcheck
-	s.Set("y", "2", "n2", "session") //nolint:errcheck
+	s.Set("x", "1", "n1", "session")
+	s.Set("y", "2", "n2", "session")
 
 	got, err := s.Collect([]string{"x", "y"})
 	if err != nil {
@@ -72,7 +70,7 @@ func TestConcurrentSetAndGet(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			key := fmt.Sprintf("key%d", i)
-			s.Set(key, fmt.Sprintf("val%d", i), "node", "session") //nolint:errcheck
+			s.Set(key, fmt.Sprintf("val%d", i), "node", "session")
 		}()
 		go func() {
 			defer wg.Done()
@@ -88,8 +86,9 @@ func TestSnapshotFileWritten(t *testing.T) {
 	path := filepath.Join(dir, "context-snapshot.json")
 
 	s := NewContextStore(path)
-	if err := s.Set("auth.session_key", "abc123", "auth.login", "session"); err != nil {
-		t.Fatalf("Set: %v", err)
+	s.Set("auth.session_key", "abc123", "auth.login", "session")
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 
 	if _, err := os.Stat(path); err != nil {
@@ -102,8 +101,9 @@ func TestSnapshotFileStructure(t *testing.T) {
 	path := filepath.Join(dir, "context-snapshot.json")
 
 	s := NewContextStore(path)
-	if err := s.Set("auth.session_key", "abc123", "auth.login", "session"); err != nil {
-		t.Fatalf("Set: %v", err)
+	s.Set("auth.session_key", "abc123", "auth.login", "session")
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
 	}
 
 	raw, err := os.ReadFile(path)

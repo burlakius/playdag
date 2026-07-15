@@ -151,7 +151,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 			result.Duration = time.Since(nodeStart)
 			logLine("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
 			for k, v := range result.Provides {
-				r.store.Set(k, v, node.TestID, node.Contract.Scope) //nolint:errcheck
+				r.store.Set(k, v, node.TestID, node.Contract.Scope)
 			}
 			return result
 		}

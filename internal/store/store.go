@@ -32,18 +32,12 @@ func NewContextStore(snapshotPath string) *ContextStore {
 	}
 }
 
-// Set stores a value and, if snapshotPath is configured, flushes the store to
-// disk. The in-memory write always succeeds; an error is returned only if the
-// snapshot write fails.
-func (s *ContextStore) Set(key, value, providedBy, scope string) error {
+// Set stores a value in memory. The snapshot file is written by Flush, not on
+// every write, to keep hot-path writes off the disk.
+func (s *ContextStore) Set(key, value, providedBy, scope string) {
 	s.mu.Lock()
 	s.data[key] = ContextValue{Value: value, ProvidedBy: providedBy, Scope: scope}
 	s.mu.Unlock()
-
-	if s.snapshotPath == "" {
-		return nil
-	}
-	return s.writeSnapshot()
 }
 
 // Get returns the raw string value for key and a boolean indicating presence.
@@ -89,7 +83,13 @@ type snapshotFile struct {
 	Values      map[string]ContextValue `json:"values"`
 }
 
-func (s *ContextStore) writeSnapshot() error {
+// Flush writes the current store contents to snapshotPath. It is a no-op when
+// no snapshot path was configured. Call it once the run is complete.
+func (s *ContextStore) Flush() error {
+	if s.snapshotPath == "" {
+		return nil
+	}
+
 	s.mu.RLock()
 	cp := make(map[string]ContextValue, len(s.data))
 	for k, v := range s.data {
