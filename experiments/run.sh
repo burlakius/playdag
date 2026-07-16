@@ -108,11 +108,14 @@ time_it() {
 }
 
 run_baseline() {
-  local config=$1 workers=$2 brk=${3:-}
+  local config=$1 workers=$2 brk=${3:-} retries=${4:-0}
   log "── $config: baseline playwright, workers=$workers ${brk:+(login broken)}"
   for i in $(seq 1 "$RUNS"); do
     start_server "$brk"
-    time_it npx playwright test tests/baseline.spec.ts --workers="$workers" --config="$PROJECT/playwright.config.ts"
+    # Retries are matched to the orchestrated suite's policy, not left at zero:
+    # letting only one side retry a broken node would measure the policy rather
+    # than the method.
+    time_it npx playwright test tests/baseline.spec.ts --workers="$workers" --retries="$retries" --config="$PROJECT/playwright.config.ts"
     stop_server
     record "$config" "$i" "$LAST_SECONDS" "$LAST_EXIT"
     log "   run $i/$RUNS: ${LAST_SECONDS}s (exit $LAST_EXIT)"
@@ -149,7 +152,8 @@ run_baseline e1p 4
 run_playdag e2 1
 run_playdag e3 4
 run_playdag e4 4 login "-fail-fast"
-run_baseline e4b 4 login
+# The suite gives auth.login one retry, so the baseline gets one too.
+run_baseline e4b 4 login 1
 
 for w in 1 2 4 8; do
   run_playdag "s${w}" "$w"
