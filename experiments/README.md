@@ -39,13 +39,33 @@ npm install
 npx playwright install chromium
 pip install scipy numpy matplotlib
 
+# the configurations above
 ./experiments/run.sh ../experiments/results 11
 python3 experiments/analyze.py ../experiments/results
+
+# where the method starts to pay
+./experiments/sensitivity.sh ../experiments/sensitivity 6
+python3 experiments/sensitivity.py ../experiments/sensitivity
 ```
 
 `run.sh` writes one JSON per run; `analyze.py` turns them into `results.md`,
 `results.json` and figures. Measurements go outside this repository by default:
 they are evidence for the write-up, not source code.
+
+## Sensitivity: the question behind the numbers
+
+Whether orchestration wins is not a property of the method alone. Sharing a
+session saves what establishing it costs, once for every test that no longer
+does it; running each node in its own framework process costs a fixed startup,
+every node. The balance turns on one number — how expensive the repeated
+operation is.
+
+The demo application signs a user in in about ten milliseconds, which no real
+application does. `sensitivity.sh` therefore varies that cost directly
+(`DEMO_LOGIN_MS`) and measures both suites at each value, so the point where the
+curves cross is measured rather than argued. It is reported in
+`sensitivity.md`, and it is the number that says which suites this method is
+for.
 
 ## Method
 
