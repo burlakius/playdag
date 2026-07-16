@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Moves the card the create node produced, reusing the same session."""
+"""Moves the card the create node produced, reusing the same session.
+
+playdag:id: card.move
+playdag:description: Move the created card to the done column
+playdag:requires: session.token, card.id
+playdag:criticality: NON_CRITICAL
+playdag:priority: 1
+playdag:retries: 1
+playdag:timeout: 30s
+playdag:scope: suite
+"""
 import json
 import os
 import sys

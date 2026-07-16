@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Creates a card with the session the login node already established."""
+"""Creates a card with the session the login node already established.
+
+playdag:id: card.create
+playdag:description: Create a card with the established session
+playdag:requires: session.token
+playdag:provides: card.id
+playdag:criticality: BLOCKER
+playdag:priority: 5
+playdag:retries: 0
+playdag:timeout: 30s
+playdag:scope: suite
+"""
 import json
 import os
 import sys

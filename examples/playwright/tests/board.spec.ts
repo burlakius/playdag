@@ -4,9 +4,13 @@ import { test, expect, playdagMeta } from '@playdag/playwright';
 // it publishes rather than driving the login form again.
 test('sign in', playdagMeta({
   id: 'auth.login',
+  description: 'Sign in through the UI and publish the session token',
   provides: ['session.token'],
   criticality: 'BLOCKER',
   priority: 10,
+  retries: 1,
+  timeout: '90s',
+  scope: 'suite',
   tags: ['chromium'],
 }), async ({ page, playdag }) => {
   await page.goto('/login');
@@ -21,10 +25,14 @@ test('sign in', playdagMeta({
 
 test('create a card', playdagMeta({
   id: 'card.create',
+  description: 'Create a card with the session the login node established',
   requires: ['session.token'],
   provides: ['card.id'],
   criticality: 'BLOCKER',
   priority: 5,
+  retries: 0,
+  timeout: '90s',
+  scope: 'suite',
   tags: ['chromium'],
 }), async ({ page, playdag }) => {
   await signedIn(page, playdag.get('session.token'));
@@ -41,9 +49,13 @@ test('create a card', playdagMeta({
 
 test('move a card to done', playdagMeta({
   id: 'card.move',
+  description: 'Move the created card to the done column',
   requires: ['session.token', 'card.id'],
   criticality: 'NON_CRITICAL',
   priority: 1,
+  retries: 1,
+  timeout: '90s',
+  scope: 'suite',
   tags: ['chromium'],
 }), async ({ page, playdag }) => {
   await signedIn(page, playdag.get('session.token'));

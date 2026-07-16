@@ -27,6 +27,10 @@ go build ./cmd/orchestrator/
 # the system under test is started once, outside the run
 node examples/demo-app/server.js 8000 &
 
+# suite.json is generated from the annotations in the tests
+./orchestrator extract -extractor playwright \
+  -basedir examples/playwright -o examples/playwright/suite.json
+
 ./orchestrator -executor playwright \
   -suite examples/playwright/suite.json \
   -basedir examples/playwright \
@@ -57,8 +61,11 @@ test('create a card', playdagMeta({
 });
 ```
 
-`suite.json` still repeats that contract by hand; generating it from these
-annotations is what the metadata extractor does next.
+`suite.json` is generated from exactly these annotations by
+`orchestrator extract`, so it is a build artefact and is not committed. Nothing
+describes a node twice, and a broken contract — an unknown key, a key provided
+by two tests, a cycle — is an error at extraction time, pointing at the file and
+line that declared it.
 
 ## Artifacts
 

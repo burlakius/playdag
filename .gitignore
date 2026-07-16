@@ -22,6 +22,9 @@
 node_modules/
 dist/
 
+# Generated suites: extracted from the tests, never written by hand
+examples/*/suite.json
+
 # Output directories
 logs/
 test-results/

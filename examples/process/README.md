@@ -17,13 +17,18 @@ orchestrator is there to remove.
 
 ## Run
 
-Start the demo application, then run the suite against it:
+Start the demo application, generate the suite from the agents, then run it:
 
 ```bash
 node ../demo-app/server.js 8000 &
 
 cd ../..
 go build ./cmd/orchestrator/
+
+# suite.json is generated, never written by hand
+./orchestrator extract -extractor process \
+  -basedir examples/process -o examples/process/suite.json
+
 ./orchestrator -executor process \
   -suite examples/process/suite.json \
   -basedir examples/process \
@@ -35,7 +40,21 @@ snapshot.
 
 ## Writing an agent
 
-An agent reads the request on stdin and writes one JSON response on stdout:
+An agent declares what it needs and produces in its header, and the extractor
+builds the graph from those declarations:
+
+```python
+"""Creates a card with the session the login node already established.
+
+playdag:id: card.create
+playdag:requires: session.token
+playdag:provides: card.id
+playdag:criticality: BLOCKER
+playdag:timeout: 30s
+"""
+```
+
+It then reads the request on stdin and writes one JSON response on stdout:
 
 ```python
 req = json.load(sys.stdin)

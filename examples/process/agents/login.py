@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Logs in and hands the session token to every node that follows."""
+"""Logs in and hands the session token to every node that follows.
+
+playdag:id: auth.login
+playdag:description: Log in over the API and publish the session token
+playdag:provides: session.token
+playdag:criticality: BLOCKER
+playdag:priority: 10
+playdag:retries: 1
+playdag:timeout: 30s
+playdag:scope: suite
+"""
 import json
 import os
 import sys
