@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"playdag/internal/executor"
 	"playdag/internal/graph"
 	"playdag/internal/loader"
 	"playdag/internal/store"
@@ -37,7 +38,7 @@ func TestRun_RealSubprocess(t *testing.T) {
 	s := store.NewContextStore("")
 	r := NewRunner(dag, s, RunOptions{
 		MaxConcurrency: 1,
-		BaseDir:        testdataDir,
+		Executor:       executor.NewProcess(testdataDir, ""),
 	})
 
 	if err := r.Run(context.Background()); err != nil {

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"playdag/internal/executor"
 	"playdag/internal/graph"
 	"playdag/internal/loader"
 	"playdag/internal/report"
@@ -59,9 +60,8 @@ func main() {
 	s := store.NewContextStore(*snapshotFlag)
 	r := runner.NewRunner(dag, s, runner.RunOptions{
 		MaxConcurrency: *workersFlag,
-		BaseDir:        *basedirFlag,
-		BaseURL:        *baseurlFlag,
 		JSONLog:        *jsonFlag,
+		Executor:       executor.NewProcess(*basedirFlag, *baseurlFlag),
 		Agents:         agents,
 	})
 
