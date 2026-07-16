@@ -69,7 +69,9 @@ suite.json  (generated artefact)
      ▼
 ┌──────────┐
 │  report  │  Generate() → text report
-│          │  SaveJSON() → logs/report.json
+│          │  SaveJSON()  → logs/report.json  (+ cost metrics)
+│          │  SaveHTML()  → timeline, one self-contained file
+│          │  SaveJUnit() → GitLab / Jenkins
 └──────────┘
 ```
 
@@ -109,6 +111,7 @@ Playwright adapter needs Node 18+ (`npm install`).
 |---------|-------------|
 | `orchestrator [flags]` | Run a suite |
 | `orchestrator extract [flags]` | Generate `suite.json` from the tests |
+| `orchestrator graph [flags]` | Render the dependency graph as Mermaid or DOT |
 
 `extract` reads the metadata where it is declared — Playwright annotations, or a
 header convention in agent scripts — validates the contracts, and writes the
@@ -133,8 +136,11 @@ is not meant to be edited.
 | `-fail-fast` | `false` | Stop the run as soon as a BLOCKER node fails |
 | `-max-failures` | `0` | Stop after this many failed nodes; 0 = no limit |
 | `-global-context` | | File where `global`-scoped values persist between runs |
+| `-html` | | Path for a single-file HTML report with a timeline |
+| `-junit` | | Path for a JUnit XML report (GitLab, Jenkins) |
 
 `extract` takes `-extractor` (`process` or `playwright`), `-basedir`, `-o` (output path, `-` for stdout), `-suite-id` and `-timeout`.
+`graph` takes `-suite`, `-format` (`mermaid` or `dot`) and `-o`.
 
 Exit code is `0` if all tests pass, `1` if any fail or the global timeout fires.
 

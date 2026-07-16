@@ -167,6 +167,7 @@ func run(args []string) {
 	maxfailFlag  := fs.Int("max-failures",      0,                            "stop after this many failed nodes; 0 = no limit")
 	globalFlag   := fs.String("global-context", "",                           "file where global-scoped values persist between runs; empty = off")
 	htmlFlag     := fs.String("html",           "",                           "path for a single-file HTML report with a timeline; empty = off")
+	junitFlag    := fs.String("junit",          "",                           "path for a JUnit XML report, read natively by GitLab and Jenkins; empty = off")
 	fs.Parse(args)
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -182,7 +183,7 @@ func run(args []string) {
 	}
 
 	// Ensure parent directories for output files exist.
-	for _, p := range []string{*snapshotFlag, *reportFlag, *htmlFlag} {
+	for _, p := range []string{*snapshotFlag, *reportFlag, *htmlFlag, *junitFlag} {
 		if p == "" {
 			continue
 		}
@@ -263,6 +264,12 @@ func run(args []string) {
 	if *htmlFlag != "" {
 		if err := report.SaveHTML(rep, *htmlFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: save html report: %v\n", err)
+		}
+	}
+
+	if *junitFlag != "" {
+		if err := report.SaveJUnit(rep, *junitFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: save junit report: %v\n", err)
 		}
 	}
 
