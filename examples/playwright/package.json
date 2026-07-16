@@ -1,0 +1,11 @@
+{
+  "name": "playdag-example-playwright",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Minimal Playwright suite orchestrated by playdag",
+  "devDependencies": {
+    "@playdag/playwright": "*",
+    "@playwright/test": "^1.40.0",
+    "typescript": "^5.4.0"
+  }
+}

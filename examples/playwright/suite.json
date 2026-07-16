@@ -1,0 +1,63 @@
+{
+  "suite_id": "demo-playwright-v1",
+  "generated_at": "2026-07-16T00:00:00Z",
+  "nodes": [
+    {
+      "test_id": "auth.login",
+      "description": "Sign in through the UI and publish the session token",
+      "script": "tests/board.spec.ts",
+      "contract": {
+        "requires": [],
+        "provides": ["session.token"],
+        "scope": "suite"
+      },
+      "policy": {
+        "criticality": "BLOCKER",
+        "retries": 1,
+        "priority": 10,
+        "timeout": "90s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    },
+    {
+      "test_id": "card.create",
+      "description": "Create a card with the session the login node established",
+      "script": "tests/board.spec.ts",
+      "contract": {
+        "requires": ["session.token"],
+        "provides": ["card.id"],
+        "scope": "suite"
+      },
+      "policy": {
+        "criticality": "BLOCKER",
+        "retries": 0,
+        "priority": 5,
+        "timeout": "90s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    },
+    {
+      "test_id": "card.move",
+      "description": "Move the created card to the done column",
+      "script": "tests/board.spec.ts",
+      "contract": {
+        "requires": ["session.token", "card.id"],
+        "provides": [],
+        "scope": "suite"
+      },
+      "policy": {
+        "criticality": "NON_CRITICAL",
+        "retries": 1,
+        "priority": 1,
+        "timeout": "90s"
+      },
+      "resources": {
+        "tags": ["chromium"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "playdag-workspace",
+  "private": true,
+  "description": "npm workspace holding the playdag adapters and their examples",
+  "workspaces": [
+    "adapters/playwright",
+    "examples/playwright"
+  ]
+}
