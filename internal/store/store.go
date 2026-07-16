@@ -9,17 +9,40 @@ import (
 	"time"
 )
 
+// Scopes a value can be declared with. The scope decides how long the value
+// lives and who can see it, which is the difference between reusing a session
+// and leaking one.
+const (
+	// ScopeSession keeps the value inside the agent that produced it: it stands
+	// for something bound to one worker, such as a browser context.
+	ScopeSession = "session"
+	// ScopeSuite keeps the value for the rest of the run. It is the default.
+	ScopeSuite = "suite"
+	// ScopeGlobal keeps the value beyond the run: it is persisted and reloaded,
+	// so an expensive setup is paid for once rather than once per run.
+	ScopeGlobal = "global"
+)
+
 // ContextValue is a single entry in the store, carrying provenance metadata.
 type ContextValue struct {
 	Value      string `json:"value"`
 	ProvidedBy string `json:"provided_by"`
 	Scope      string `json:"scope"`
+	Session    string `json:"session,omitempty"` // agent that owns it, for session scope
 }
 
-// ContextStore is a thread-safe key/value store with optional snapshot persistence.
+// valueKey identifies a value. Session-scoped values are held per session;
+// everything else is shared by the whole run.
+type valueKey struct {
+	session string
+	key     string
+}
+
+// ContextStore is a thread-safe key/value store with optional snapshot
+// persistence.
 type ContextStore struct {
 	mu           sync.RWMutex
-	data         map[string]ContextValue
+	values       map[valueKey]ContextValue
 	snapshotPath string
 }
 
@@ -27,36 +50,49 @@ type ContextStore struct {
 // file persistence.
 func NewContextStore(snapshotPath string) *ContextStore {
 	return &ContextStore{
-		data:         make(map[string]ContextValue),
+		values:       make(map[valueKey]ContextValue),
 		snapshotPath: snapshotPath,
 	}
 }
 
-// Set stores a value in memory. The snapshot file is written by Flush, not on
-// every write, to keep hot-path writes off the disk.
-func (s *ContextStore) Set(key, value, providedBy, scope string) {
+// Set stores a value produced by providedBy while running on session. A
+// session-scoped value is visible only to nodes on that same session; any other
+// scope is visible to the whole run. The snapshot file is written by Flush, not
+// on every write, to keep hot-path writes off the disk.
+func (s *ContextStore) Set(key, value, providedBy, scope, session string) {
 	s.mu.Lock()
-	s.data[key] = ContextValue{Value: value, ProvidedBy: providedBy, Scope: scope}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+
+	owner := ""
+	if scope == ScopeSession {
+		owner = session
+	}
+	s.values[valueKey{session: owner, key: key}] = ContextValue{
+		Value:      value,
+		ProvidedBy: providedBy,
+		Scope:      scope,
+		Session:    owner,
+	}
 }
 
-// Get returns the raw string value for key and a boolean indicating presence.
+// Get returns the value visible to the whole run for key.
 func (s *ContextStore) Get(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	cv, ok := s.data[key]
+	cv, ok := s.values[valueKey{key: key}]
 	return cv.Value, ok
 }
 
-// Collect resolves every key in the slice and returns a key→value map. It
-// returns an error on the first missing key.
-func (s *ContextStore) Collect(keys []string) (map[string]string, error) {
+// Collect resolves every key as seen from session, returning a key→value map.
+// A value the session owns wins over a shared one of the same name. It returns
+// an error on the first key that is not visible.
+func (s *ContextStore) Collect(keys []string, session string) (map[string]string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	out := make(map[string]string, len(keys))
 	for _, k := range keys {
-		cv, ok := s.data[k]
+		cv, ok := s.lookup(k, session)
 		if !ok {
 			return nil, fmt.Errorf("required key %q not found in ContextStore", k)
 		}
@@ -65,14 +101,46 @@ func (s *ContextStore) Collect(keys []string) (map[string]string, error) {
 	return out, nil
 }
 
-// Snapshot returns a deep copy of the internal data map.
-func (s *ContextStore) Snapshot() map[string]ContextValue {
+// lookup finds a key as seen from session. Callers hold the lock.
+func (s *ContextStore) lookup(key, session string) (ContextValue, bool) {
+	if cv, ok := s.values[valueKey{session: session, key: key}]; ok {
+		return cv, true
+	}
+	cv, ok := s.values[valueKey{key: key}]
+	return cv, ok
+}
+
+// SessionFor reports which session owns a session-scoped key. A node needing
+// that key can only run there, since the value exists nowhere else.
+func (s *ContextStore) SessionFor(key string) (string, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	cp := make(map[string]ContextValue, len(s.data))
-	for k, v := range s.data {
-		cp[k] = v
+	for vk, cv := range s.values {
+		if vk.key == key && cv.Scope == ScopeSession {
+			return vk.session, true
+		}
+	}
+	return "", false
+}
+
+// Snapshot returns a copy of the store for the report. A session-scoped value is
+// rendered as "key@session", since the same key may exist once per session.
+func (s *ContextStore) Snapshot() map[string]ContextValue {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.snapshot()
+}
+
+// snapshot builds the flat view. Callers hold the lock.
+func (s *ContextStore) snapshot() map[string]ContextValue {
+	cp := make(map[string]ContextValue, len(s.values))
+	for vk, cv := range s.values {
+		name := vk.key
+		if vk.session != "" {
+			name = vk.key + "@" + vk.session
+		}
+		cp[name] = cv
 	}
 	return cp
 }
@@ -91,10 +159,7 @@ func (s *ContextStore) Flush() error {
 	}
 
 	s.mu.RLock()
-	cp := make(map[string]ContextValue, len(s.data))
-	for k, v := range s.data {
-		cp[k] = v
-	}
+	cp := s.snapshot()
 	s.mu.RUnlock()
 
 	payload := snapshotFile{

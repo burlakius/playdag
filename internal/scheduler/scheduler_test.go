@@ -40,7 +40,7 @@ func TestQueueOrder_PriorityThenCritPathThenID(t *testing.T) {
 	crit := map[string]int{"B": 1, "C": 2} // C sits on a longer downstream chain
 	s := New([]*Agent{{Name: "a1"}}, crit)
 	for _, n := range nodes {
-		s.Push(n)
+		s.Push(n, "")
 	}
 
 	got := drain(s)
@@ -53,7 +53,7 @@ func TestQueueOrder_PriorityThenCritPathThenID(t *testing.T) {
 func TestQueueOrder_TieBreakByID(t *testing.T) {
 	s := New([]*Agent{{Name: "a1"}}, nil)
 	for _, id := range []string{"z", "a", "m"} {
-		s.Push(nodeP(id, 0, nil))
+		s.Push(nodeP(id, 0, nil), "")
 	}
 
 	got := drain(s)
@@ -69,7 +69,7 @@ func TestQueueOrder_Reproducible(t *testing.T) {
 		for _, n := range []*loader.TestNode{
 			nodeP("a", 5, nil), nodeP("b", 5, nil), nodeP("c", 9, nil),
 		} {
-			s.Push(n)
+			s.Push(n, "")
 		}
 		return drain(s)
 	}
@@ -82,7 +82,7 @@ func TestNext_TagMatching(t *testing.T) {
 	chrome := &Agent{Name: "chrome", Tags: []string{"chromium"}}
 	fire := &Agent{Name: "fire", Tags: []string{"firefox"}}
 	s := New([]*Agent{chrome, fire}, nil)
-	s.Push(nodeP("t", 0, []string{"chromium"}))
+	s.Push(nodeP("t", 0, []string{"chromium"}), "")
 
 	n, a, ok := s.Next()
 	if !ok {
@@ -95,7 +95,7 @@ func TestNext_TagMatching(t *testing.T) {
 
 func TestNext_NoMatchingAgent(t *testing.T) {
 	s := New([]*Agent{{Name: "chrome", Tags: []string{"chromium"}}}, nil)
-	s.Push(nodeP("t", 0, []string{"webkit"}))
+	s.Push(nodeP("t", 0, []string{"webkit"}), "")
 
 	if _, _, ok := s.Next(); ok {
 		t.Fatal("expected no schedulable node for unmatched tag")
@@ -107,8 +107,8 @@ func TestNext_NoMatchingAgent(t *testing.T) {
 
 func TestNext_SkipsBlockedHigherPriority(t *testing.T) {
 	s := New([]*Agent{{Name: "chrome", Tags: []string{"chromium"}}}, nil)
-	s.Push(nodeP("high", 100, []string{"webkit"})) // no agent can run it
-	s.Push(nodeP("low", 1, []string{"chromium"}))
+	s.Push(nodeP("high", 100, []string{"webkit"}), "") // no agent can run it
+	s.Push(nodeP("low", 1, []string{"chromium"}), "")
 
 	n, _, ok := s.Next()
 	if !ok || n.TestID != "low" {
@@ -121,8 +121,8 @@ func TestNext_SkipsBlockedHigherPriority(t *testing.T) {
 
 func TestNext_AllAgentsBusy(t *testing.T) {
 	s := New([]*Agent{{Name: "a1"}}, nil)
-	s.Push(nodeP("x", 0, nil))
-	s.Push(nodeP("y", 0, nil))
+	s.Push(nodeP("x", 0, nil), "")
+	s.Push(nodeP("y", 0, nil), "")
 
 	if _, _, ok := s.Next(); !ok {
 		t.Fatal("first Next should succeed")
@@ -164,5 +164,66 @@ func TestParseAgents_DuplicateName(t *testing.T) {
 func TestParseAgents_MissingName(t *testing.T) {
 	if _, err := ParseAgents(`[{"tags":["chromium"]}]`); err == nil {
 		t.Fatal("expected missing-name error")
+	}
+}
+
+// An affine node runs on its own agent and nowhere else, even when another
+// agent is idle and would take it happily: the session it needs exists only there.
+func TestNext_AffinityPinsToOneAgent(t *testing.T) {
+	a1 := &Agent{Name: "a1"}
+	a2 := &Agent{Name: "a2"}
+	s := New([]*Agent{a1, a2}, nil)
+	s.Push(nodeP("pinned", 0, nil), "a2")
+
+	n, agent, ok := s.Next()
+	if !ok {
+		t.Fatal("expected the node to be schedulable")
+	}
+	if n.TestID != "pinned" || agent.Name != "a2" {
+		t.Fatalf("want pinned on a2, got %s on %s", n.TestID, agent.Name)
+	}
+}
+
+func TestNext_AffineNodeWaitsForItsAgent(t *testing.T) {
+	a1 := &Agent{Name: "a1"}
+	a2 := &Agent{Name: "a2"}
+	s := New([]*Agent{a1, a2}, nil)
+
+	// Occupy a1, then queue a node that may only run on a1.
+	s.Push(nodeP("busywork", 10, nil), "a1")
+	if _, _, ok := s.Next(); !ok {
+		t.Fatal("busywork should have taken a1")
+	}
+	s.Push(nodeP("pinned", 5, nil), "a1")
+
+	if _, agent, ok := s.Next(); ok {
+		t.Fatalf("pinned must wait for a1, but it was given %s", agent.Name)
+	}
+	if s.Pending() != 1 {
+		t.Fatalf("pinned should stay queued, pending=%d", s.Pending())
+	}
+
+	// Once a1 is free it runs there.
+	s.Release(a1)
+	n, agent, ok := s.Next()
+	if !ok || n.TestID != "pinned" || agent.Name != "a1" {
+		t.Fatalf("want pinned on a1 after release, got %v on %v (ok=%v)", n, agent, ok)
+	}
+}
+
+// A pinned node must not block an unpinned one that any agent can run.
+func TestNext_AffineNodeDoesNotBlockOthers(t *testing.T) {
+	a1 := &Agent{Name: "a1"}
+	a2 := &Agent{Name: "a2"}
+	s := New([]*Agent{a1, a2}, nil)
+
+	s.Push(nodeP("busywork", 20, nil), "a1")
+	s.Next()                               // takes a1
+	s.Push(nodeP("pinned", 10, nil), "a1") // higher priority, but a1 is busy
+	s.Push(nodeP("free", 1, nil), "")
+
+	n, agent, ok := s.Next()
+	if !ok || n.TestID != "free" || agent.Name != "a2" {
+		t.Fatalf("want free on a2, got %v (ok=%v)", n, ok)
 	}
 }

@@ -127,7 +127,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	stopping := false
 
 	for _, n := range r.dag.ReadyNodes() {
-		r.sched.Push(n)
+		r.push(n)
 	}
 
 	for {
@@ -142,7 +142,7 @@ func (r *Runner) Run(ctx context.Context) error {
 				r.wg.Add(1)
 				go func() {
 					defer r.wg.Done()
-					result := r.runNode(runCtx, node)
+					result := r.runNode(runCtx, node, agent)
 					done <- nodeCompletion{node: node, agent: agent, result: result}
 				}()
 			}
@@ -216,7 +216,7 @@ func (r *Runner) complete(c nodeCompletion) {
 
 	if c.result.Status == protocol.StatusPassed {
 		for _, n := range r.dag.MarkPassed(c.node.TestID) {
-			r.sched.Push(n)
+			r.push(n)
 		}
 		return
 	}
@@ -232,6 +232,46 @@ func (r *Runner) complete(c nodeCompletion) {
 		r.results[sid] = AgentResult{Status: protocol.StatusSkipped, Error: "blocked by: " + c.node.TestID}
 		r.mu.Unlock()
 	}
+}
+
+// push queues a ready node, pinning it to the agent that holds the session it
+// needs. A node whose required session-scoped values live on two different
+// agents cannot run anywhere, so it fails here with that said plainly rather
+// than later with a missing key.
+func (r *Runner) push(node *loader.TestNode) {
+	affinity, err := r.affinityFor(node)
+	if err != nil {
+		r.log("FAIL", node.TestID, err.Error())
+		r.mu.Lock()
+		r.results[node.TestID] = AgentResult{Status: protocol.StatusFailed, Error: err.Error()}
+		r.mu.Unlock()
+		for _, sid := range r.dag.MarkFailed(node.TestID) {
+			r.log("SKIP", sid, "blocked by: "+node.TestID)
+			r.mu.Lock()
+			r.results[sid] = AgentResult{Status: protocol.StatusSkipped, Error: "blocked by: " + node.TestID}
+			r.mu.Unlock()
+		}
+		return
+	}
+	r.sched.Push(node, affinity)
+}
+
+// affinityFor reports the agent a node must run on, or "" when it may run
+// anywhere.
+func (r *Runner) affinityFor(node *loader.TestNode) (string, error) {
+	affinity, from := "", ""
+	for _, key := range node.Contract.Requires {
+		session, ok := r.store.SessionFor(key)
+		if !ok {
+			continue
+		}
+		if affinity != "" && session != affinity {
+			return "", fmt.Errorf("requires session-scoped keys from two agents: %q on %s and %q on %s",
+				from, affinity, key, session)
+		}
+		affinity, from = session, key
+	}
+	return affinity, nil
 }
 
 // cancelPending closes out the nodes that never started, so a run that stopped
@@ -252,7 +292,7 @@ func (r *Runner) cancelPending() {
 
 // runNode executes a single node with retries and writes its provides into the
 // store on success. It logs every attempt and the final outcome.
-func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult {
+func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *scheduler.Agent) AgentResult {
 	nodeStart := time.Now()
 	maxAttempts := 1 + node.Policy.Retries
 	if maxAttempts < 1 {
@@ -263,7 +303,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		r.log("RUN", node.TestID, fmt.Sprintf("attempt %d/%d", attempt, maxAttempts))
 		attemptStart := time.Now()
-		result = r.execNode(ctx, node, attempt)
+		result = r.execNode(ctx, node, agent, attempt)
 		attemptElapsed := time.Since(attemptStart)
 
 		if result.Status == protocol.StatusPassed {
@@ -278,7 +318,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 			}
 			r.log("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
 			for k, v := range result.Provides {
-				r.store.Set(k, v, node.TestID, node.Contract.Scope)
+				r.store.Set(k, v, node.TestID, node.Contract.Scope, agent.Name)
 			}
 			return result
 		}
@@ -339,8 +379,8 @@ func cancelReason(ctx context.Context) string {
 // execNode resolves the node's required context and hands one attempt to the
 // executor. A transport-level error becomes a FAILED result: from the DAG's
 // point of view an agent that never reported is a node that did not pass.
-func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, attempt int) AgentResult {
-	ctxData, err := r.store.Collect(node.Contract.Requires)
+func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, agent *scheduler.Agent, attempt int) AgentResult {
+	ctxData, err := r.store.Collect(node.Contract.Requires, agent.Name)
 	if err != nil {
 		return AgentResult{Status: protocol.StatusFailed, Error: err.Error()}
 	}

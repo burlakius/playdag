@@ -484,3 +484,134 @@ func TestRun_FirstAttemptPassIsNotFlaky(t *testing.T) {
 		t.Errorf("attempts: want 1, got %d", got.Attempts)
 	}
 }
+
+// A chain built on a session-scoped value must still run end to end. (That the
+// dependants are pinned to the owning agent is decided by affinityFor and the
+// scheduler, and is tested there: this chain is serial, so it would land on one
+// agent either way.)
+func TestRun_SessionScopedChainPasses(t *testing.T) {
+	f := newFake()
+	f.results["auth.login"] = executor.Result{
+		Status:   protocol.StatusPassed,
+		Provides: map[string]string{"session.token": "tok"},
+	}
+	f.results["card.create"] = executor.Result{
+		Status:   protocol.StatusPassed,
+		Provides: map[string]string{"card.id": "42"},
+	}
+
+	login := node("auth.login", nil, []string{"session.token"})
+	login.Contract.Scope = "session"
+	create := node("card.create", []string{"session.token"}, []string{"card.id"})
+	archive := node("card.archive", []string{"card.id", "session.token"}, nil)
+
+	nodes := []loader.TestNode{login, create, archive}
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	s := store.NewContextStore("")
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 4, Executor: f})
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, id := range []string{"auth.login", "card.create", "card.archive"} {
+		if got := r.Results()[id].Status; got != protocol.StatusPassed {
+			t.Fatalf("%s: want PASSED, got %q (%s)", id, got, r.Results()[id].Error)
+		}
+	}
+	// The token reached the dependants, which can only happen on the owning agent.
+	if got := f.contextFor("card.create")["session.token"]; got != "tok" {
+		t.Errorf("card.create did not get the session token: %q", got)
+	}
+	if got := f.contextFor("card.archive")["session.token"]; got != "tok" {
+		t.Errorf("card.archive did not get the session token: %q", got)
+	}
+}
+
+// A suite-scoped value pins nothing, so the same graph is free to spread out.
+func TestRun_SuiteScopeDoesNotPin(t *testing.T) {
+	f := newFake()
+	f.results["auth.login"] = executor.Result{
+		Status:   protocol.StatusPassed,
+		Provides: map[string]string{"session.token": "tok"},
+	}
+	login := node("auth.login", nil, []string{"session.token"})
+	login.Contract.Scope = "suite"
+
+	nodes := []loader.TestNode{login, node("a", []string{"session.token"}, nil), node("b", []string{"session.token"}, nil)}
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{MaxConcurrency: 4, Executor: f})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if got := r.Results()[id].Status; got != protocol.StatusPassed {
+			t.Fatalf("%s: %q %s", id, got, r.Results()[id].Error)
+		}
+	}
+}
+
+func TestAffinityFor_SessionKeyPinsToItsAgent(t *testing.T) {
+	s := store.NewContextStore("")
+	s.Set("session.token", "tok", "auth.login", "session", "agent-2")
+
+	dag, err := graph.NewDAG([]loader.TestNode{node("a", nil, nil)})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 2, Executor: newFake()})
+
+	n := node("card.create", []string{"session.token"}, nil)
+	got, err := r.affinityFor(&n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "agent-2" {
+		t.Fatalf("want agent-2, got %q", got)
+	}
+}
+
+func TestAffinityFor_SuiteKeyPinsNothing(t *testing.T) {
+	s := store.NewContextStore("")
+	s.Set("card.id", "42", "card.create", "suite", "agent-1")
+
+	dag, err := graph.NewDAG([]loader.TestNode{node("a", nil, nil)})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 2, Executor: newFake()})
+
+	n := node("card.move", []string{"card.id"}, nil)
+	got, err := r.affinityFor(&n)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("a suite-scoped key must not pin the node, got %q", got)
+	}
+}
+
+// A node needing sessions from two agents can run nowhere. Saying that plainly
+// beats letting it fail later with a missing key it could never have had.
+func TestAffinityFor_TwoSessionsIsAnError(t *testing.T) {
+	s := store.NewContextStore("")
+	s.Set("a.token", "1", "a", "session", "agent-1")
+	s.Set("b.token", "2", "b", "session", "agent-2")
+
+	dag, err := graph.NewDAG([]loader.TestNode{node("x", nil, nil)})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 2, Executor: newFake()})
+
+	n := node("needs.both", []string{"a.token", "b.token"}, nil)
+	if _, err := r.affinityFor(&n); err == nil {
+		t.Fatal("expected an error for keys from two agents")
+	}
+}

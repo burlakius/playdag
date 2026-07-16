@@ -53,12 +53,15 @@ func New(agents []*Agent, critPath map[string]int) *Scheduler {
 	}
 }
 
-// Push enqueues a node that has become ready to run.
-func (s *Scheduler) Push(node *loader.TestNode) {
+// Push enqueues a node that has become ready to run. affinity names the only
+// agent that may run it, or is empty when any matching agent will do: a node
+// needing a session-scoped value can only run where that value exists.
+func (s *Scheduler) Push(node *loader.TestNode, affinity string) {
 	heap.Push(&s.pq, &item{
 		node:     node,
 		priority: node.Policy.Priority,
 		critPath: s.critPath[node.TestID],
+		affinity: affinity,
 	})
 }
 
@@ -70,7 +73,7 @@ func (s *Scheduler) Next() (node *loader.TestNode, agent *Agent, ok bool) {
 	var deferred []*item
 	for s.pq.Len() > 0 {
 		it := heap.Pop(&s.pq).(*item)
-		if a := s.freeAgentFor(it.node.Resources.Tags); a != nil {
+		if a := s.freeAgentFor(it.node.Resources.Tags, it.affinity); a != nil {
 			s.busy[a.Name] = true
 			node, agent, ok = it.node, a, true
 			break
@@ -83,8 +86,14 @@ func (s *Scheduler) Next() (node *loader.TestNode, agent *Agent, ok bool) {
 	return node, agent, ok
 }
 
-func (s *Scheduler) freeAgentFor(required []string) *Agent {
+// freeAgentFor picks an idle agent that can run the node. A node with an
+// affinity waits for that one agent rather than taking another: running it
+// elsewhere would not find the session it needs.
+func (s *Scheduler) freeAgentFor(required []string, affinity string) *Agent {
 	for _, a := range s.agents {
+		if affinity != "" && a.Name != affinity {
+			continue
+		}
 		if !s.busy[a.Name] && a.satisfies(required) {
 			return a
 		}
@@ -117,6 +126,7 @@ type item struct {
 	node     *loader.TestNode
 	priority int
 	critPath int
+	affinity string // agent that must run this node, or empty for any
 }
 
 // priorityQueue orders items by priority (desc), then critical-path length
