@@ -31,6 +31,12 @@ type AgentResult struct {
 	Attempts  int                 `json:"attempts,omitempty"`    // attempts the node took
 	Flaky     bool                `json:"flaky,omitempty"`       // passed, but only after a retry
 	Cached    bool                `json:"cached,omitempty"`      // not run: its global values survived a previous run
+
+	// StartedAt and FinishedAt place the node on the run's timeline. They are
+	// zero for a node that never ran.
+	StartedAt  time.Time `json:"started_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	Agent      string    `json:"agent,omitempty"` // agent that ran it
 }
 
 // RunOptions configures runner behaviour.
@@ -335,7 +341,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *sche
 		attemptElapsed := time.Since(attemptStart)
 
 		if result.Status == protocol.StatusPassed {
-			result.Duration = time.Since(nodeStart)
+			result = r.stamp(result, node, agent, nodeStart)
 			result.Attempts = attempt
 			// A node that only passed on a retry passed under a different roll of
 			// the dice than the one the suite is supposed to test. Say so, rather
@@ -353,7 +359,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *sche
 		// A cancelled node was not tried, so retrying it would only restart work
 		// the run has already decided to abandon.
 		if result.Status == protocol.StatusSkipped {
-			result.Duration = time.Since(nodeStart)
+			result = r.stamp(result, node, agent, nodeStart)
 			r.log("SKIP", node.TestID, result.Error)
 			return result
 		}
@@ -364,8 +370,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *sche
 				select {
 				case <-time.After(wait):
 				case <-ctx.Done():
-					result = AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}
-					result.Duration = time.Since(nodeStart)
+					result = r.stamp(AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}, node, agent, nodeStart)
 					r.log("SKIP", node.TestID, result.Error)
 					return result
 				}
@@ -373,9 +378,21 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *sche
 		}
 	}
 
-	result.Duration = time.Since(nodeStart)
+	result = r.stamp(result, node, agent, nodeStart)
 	result.Attempts = maxAttempts
 	r.log("FAIL", node.TestID, result.Error)
+	return result
+}
+
+// stamp places a finished node on the run's timeline. The span covers every
+// attempt, including the waits between them, because that is what the node cost
+// the run whatever happened inside it.
+func (r *Runner) stamp(result AgentResult, node *loader.TestNode, agent *scheduler.Agent, start time.Time) AgentResult {
+	now := time.Now()
+	result.StartedAt = start
+	result.FinishedAt = now
+	result.Duration = now.Sub(start)
+	result.Agent = agent.Name
 	return result
 }
 

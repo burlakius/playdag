@@ -682,3 +682,37 @@ func TestRun_SuiteScopedNodeIsNotCached(t *testing.T) {
 		t.Fatal("the node should have run")
 	}
 }
+
+// The timeline needs to know when each node ran and where, or a Gantt chart of
+// the run cannot be drawn at all.
+func TestRun_NodesAreStampedOnTheTimeline(t *testing.T) {
+	f := newFake()
+	before := time.Now()
+
+	r, _, err := run(t, []loader.TestNode{node("a", nil, []string{"a.out"}), node("b", []string{"a.out"}, nil)}, f)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	after := time.Now()
+
+	for _, id := range []string{"a", "b"} {
+		res := r.Results()[id]
+		if res.StartedAt.Before(before) || res.FinishedAt.After(after) {
+			t.Errorf("%s ran outside the run: %s → %s", id, res.StartedAt, res.FinishedAt)
+		}
+		if res.FinishedAt.Before(res.StartedAt) {
+			t.Errorf("%s finished before it started", id)
+		}
+		if res.Agent == "" {
+			t.Errorf("%s does not say which agent ran it", id)
+		}
+		if res.Duration != res.FinishedAt.Sub(res.StartedAt) {
+			t.Errorf("%s: duration and span disagree", id)
+		}
+	}
+
+	// b depends on a, so the timeline must show it starting after a finished.
+	if r.Results()["b"].StartedAt.Before(r.Results()["a"].FinishedAt) {
+		t.Error("a dependant must not start before its dependency finished")
+	}
+}
