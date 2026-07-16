@@ -16,6 +16,14 @@ const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 // in the tests, which must not know they are being sabotaged.
 const broken = process.env.DEMO_BREAK ?? '';
 
+// DEMO_LOGIN_MS makes signing in cost what it costs in a real application —
+// hashing a password, a database round trip, a redirect. On this in-memory demo
+// logging in is nearly free, which flatters any suite that repeats it; the
+// sensitivity sweep varies this to find where sharing a session starts to pay.
+const loginDelayMs = Number(process.env.DEMO_LOGIN_MS ?? 0);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 const tokens = new Map(); // token → user
 const cards = new Map(); // id → { title, column }
 
@@ -60,6 +68,13 @@ const LOGIN_PAGE = `<!doctype html>
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ user }),
     });
+    // A failed sign-in must not look like a successful one: storing whatever
+    // came back and claiming success would leave every later request carrying a
+    // token the server never issued.
+    if (!r.ok) {
+      document.querySelector('#status').textContent = 'sign in failed';
+      return;
+    }
     const { token } = await r.json();
     localStorage.setItem('token', token);
     document.querySelector('#status').textContent = 'signed in';
@@ -126,6 +141,7 @@ const server = http.createServer(async (req, res) => {
     }
     const { user } = await readBody(req);
     if (!user) return send(res, 400, { error: 'user is required' });
+    if (loginDelayMs > 0) await sleep(loginDelayMs);
     const token = randomUUID();
     tokens.set(token, user);
     return send(res, 200, { token, user });
