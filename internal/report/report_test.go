@@ -192,3 +192,55 @@ func TestSaveJSON_CarriesArtifacts(t *testing.T) {
 		t.Fatalf("artifacts lost in the JSON report: %+v", arts)
 	}
 }
+
+func TestGenerate_FlakyNodeIsCalledOut(t *testing.T) {
+	r := &Report{
+		SuiteID:   "s",
+		NodeOrder: []string{"solid", "flaky"},
+		Results: map[string]runner.AgentResult{
+			"solid": {Status: "PASSED", Attempts: 1},
+			"flaky": {Status: "PASSED", Attempts: 2, Flaky: true},
+		},
+	}
+
+	out := Generate(r)
+	if !strings.Contains(out, "FLAKY") || !strings.Contains(out, "passed on attempt 2") {
+		t.Fatalf("the flaky node should be called out:\n%s", out)
+	}
+	if !strings.Contains(out, "Passed:   2") {
+		t.Errorf("a flaky node still passed and must count as passed:\n%s", out)
+	}
+	if !strings.Contains(out, "Flaky:    1") {
+		t.Errorf("the summary should count the flaky node:\n%s", out)
+	}
+}
+
+func TestSaveJSON_CarriesFlaky(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	r := &Report{
+		SuiteID:   "s",
+		NodeOrder: []string{"flaky"},
+		Results:   map[string]runner.AgentResult{"flaky": {Status: "PASSED", Attempts: 3, Flaky: true}},
+	}
+	if err := SaveJSON(r, path); err != nil {
+		t.Fatalf("SaveJSON: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	var got struct {
+		Flaky   int `json:"flaky"`
+		Results map[string]struct {
+			Flaky    bool `json:"flaky"`
+			Attempts int  `json:"attempts"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse report: %v", err)
+	}
+	if got.Flaky != 1 || !got.Results["flaky"].Flaky || got.Results["flaky"].Attempts != 3 {
+		t.Fatalf("flaky data lost in the JSON report: %+v", got)
+	}
+}

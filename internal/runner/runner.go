@@ -28,6 +28,8 @@ type AgentResult struct {
 	Error     string              `json:"error"`
 	Artifacts []protocol.Artifact `json:"artifacts,omitempty"`   // files the agent produced: trace, video, screenshot
 	Duration  time.Duration       `json:"duration_ns,omitempty"` // total node time including retries
+	Attempts  int                 `json:"attempts,omitempty"`    // attempts the node took
+	Flaky     bool                `json:"flaky,omitempty"`       // passed, but only after a retry
 }
 
 // RunOptions configures runner behaviour.
@@ -266,6 +268,14 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 
 		if result.Status == protocol.StatusPassed {
 			result.Duration = time.Since(nodeStart)
+			result.Attempts = attempt
+			// A node that only passed on a retry passed under a different roll of
+			// the dice than the one the suite is supposed to test. Say so, rather
+			// than let a green tick hide it.
+			result.Flaky = attempt > 1
+			if result.Flaky {
+				r.log("FLAKY", node.TestID, fmt.Sprintf("passed on attempt %d/%d", attempt, maxAttempts))
+			}
 			r.log("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
 			for k, v := range result.Provides {
 				r.store.Set(k, v, node.TestID, node.Contract.Scope)
@@ -296,6 +306,7 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 	}
 
 	result.Duration = time.Since(nodeStart)
+	result.Attempts = maxAttempts
 	r.log("FAIL", node.TestID, result.Error)
 	return result
 }
@@ -382,6 +393,7 @@ func (r *Runner) log(tag, testID, detail string) {
 	}
 
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	// %-6s pads [RUN] (5 chars) to 6, matching [PASS]/[FAIL]/[SKIP] (6 chars) visually.
-	fmt.Printf("[%s] %-6s %-20s %s\n", ts, "["+tag+"]", testID, detail)
+	// %-7s pads every tag to the width of the longest one, [FLAKY], so the id
+	// column lines up whatever the event.
+	fmt.Printf("[%s] %-7s %-20s %s\n", ts, "["+tag+"]", testID, detail)
 }

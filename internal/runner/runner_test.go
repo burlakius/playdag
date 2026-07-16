@@ -444,3 +444,43 @@ func TestRun_RetryDelayIsCancellable(t *testing.T) {
 		t.Fatalf("the retry delay ignored cancellation: took %s", elapsed)
 	}
 }
+
+// A node that only passed on a retry is still green, but the run should say it
+// needed a second roll of the dice.
+func TestRun_PassOnRetryIsFlaky(t *testing.T) {
+	f := newFake()
+	f.failUntil["flaky"] = 2
+
+	n := node("flaky", nil, nil)
+	n.Policy.Retries = 2
+
+	r, _, err := run(t, []loader.TestNode{n}, f)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := r.Results()["flaky"]
+	if got.Status != protocol.StatusPassed {
+		t.Fatalf("want PASSED, got %q", got.Status)
+	}
+	if !got.Flaky {
+		t.Error("a node that passed on attempt 2 must be marked flaky")
+	}
+	if got.Attempts != 2 {
+		t.Errorf("attempts: want 2, got %d", got.Attempts)
+	}
+}
+
+func TestRun_FirstAttemptPassIsNotFlaky(t *testing.T) {
+	f := newFake()
+	r, _, err := run(t, []loader.TestNode{node("solid", nil, nil)}, f)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := r.Results()["solid"]
+	if got.Flaky {
+		t.Error("a node that passed first time must not be marked flaky")
+	}
+	if got.Attempts != 1 {
+		t.Errorf("attempts: want 1, got %d", got.Attempts)
+	}
+}
