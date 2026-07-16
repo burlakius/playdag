@@ -18,5 +18,11 @@
 # Go
 *.mod~
 
+# Node
+node_modules/
+dist/
+
 # Output directories
 logs/
+test-results/
+playwright-report/

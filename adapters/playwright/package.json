@@ -1,0 +1,34 @@
+{
+  "name": "@playdag/playwright",
+  "version": "1.0.0",
+  "description": "Playwright adapter for the playdag orchestrator: context fixture and protocol reporter",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "default": "./dist/reporter.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": {
+    "@playwright/test": ">=1.40.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}
