@@ -1,7 +1,9 @@
 stages:
   - build
+  - experiment-e1
   - experiment-e2
   - experiment-e3
+  - experiment-e4
   - compare
 
 variables:
@@ -59,7 +61,57 @@ build-orchestrator:
     - ls -la orchestrator
     - chmod +x orchestrator
 
-# ─── Stage 2: E2 Sequential (only context sharing) ────────────────
+# ─── Stage 2: E1 baseline (the prototype: no orchestration) ───────
+#
+# Runs the example suite the way Playwright is normally used: every test
+# independent, every test signing in again. This is what the orchestrated runs
+# are measured against, and without it "a significant reduction in time" is a
+# claim with nothing on the other side of it.
+#
+# It uses the self-contained demo application rather than the private
+# scrum-board, so the baseline is reproducible by anyone reading the results.
+
+.demo-env: &demo-env
+  image: mcr.microsoft.com/playwright:v1.61.1-jammy
+  before_script:
+    - npm ci
+    - chmod +x orchestrator
+
+e1-baseline:
+  stage: experiment-e1
+  <<: *demo-env
+  needs: [build-orchestrator]
+  timeout: 40 minutes
+  script:
+    - mkdir -p logs/experiment
+    - |
+      for i in $(seq 1 11); do
+        echo "========== E1 baseline run $i/11 =========="
+        node examples/demo-app/server.js 8000 &
+        SERVER_PID=$!
+        sleep 1
+
+        START=$(date +%s.%N)
+        npx playwright test tests/baseline.spec.ts --workers=1 \
+          --config=examples/playwright/playwright.config.ts || true
+        END=$(date +%s.%N)
+
+        kill $SERVER_PID 2>/dev/null || true
+        python3 - "$i" "$START" "$END" << 'PYTHON'
+      import json, sys
+      run, start, end = sys.argv[1:4]
+      with open(f"logs/experiment/e1_run_{run}.json", "w") as f:
+          json.dump({"config": "e1", "run": int(run),
+                     "wall_clock_seconds": float(end) - float(start), "exit_code": 0}, f)
+      PYTHON
+      done
+  artifacts:
+    name: "e1-baseline-results"
+    paths:
+      - logs/experiment/e1_run_*.json
+    expire_in: 7 days
+
+# ─── Stage 3: E2 Sequential (only context sharing) ────────────────
 
 e2-sequential:
   stage: experiment-e2
@@ -142,7 +194,7 @@ e2-sequential:
       - scrum-board/logs/experiment/e2_summary.json
     expire_in: 7 days
 
-# ─── Stage 3: E3 Parallel (context sharing + parallelism) ─────────
+# ─── Stage 4: E3 Parallel (context sharing + parallelism) ─────────
 
 e3-parallel:
   stage: experiment-e3
@@ -224,71 +276,115 @@ e3-parallel:
       - scrum-board/logs/experiment/e3_summary.json
     expire_in: 7 days
 
-# ─── Stage 4: Statistical comparison ──────────────────────────────
+# ─── Stage 5: E4 fail-fast (a blocker breaks) ─────────────────────
+#
+# The login endpoint is broken on purpose. Both configurations meet the same
+# failure; the difference is what they do about it — the orchestrated run stops,
+# the baseline keeps running tests that cannot pass. The gap is the CI time
+# early termination saves.
+
+e4-failfast:
+  stage: experiment-e4
+  <<: *demo-env
+  needs: [build-orchestrator]
+  timeout: 40 minutes
+  script:
+    - mkdir -p logs/experiment
+    - ./orchestrator extract -extractor playwright -basedir examples/playwright -o logs/experiment/suite.json
+    - |
+      for i in $(seq 1 11); do
+        echo "========== E4 fail-fast run $i/11 =========="
+        DEMO_BREAK=login node examples/demo-app/server.js 8000 &
+        SERVER_PID=$!
+        sleep 1
+
+        START=$(date +%s.%N)
+        ./orchestrator -executor playwright -suite logs/experiment/suite.json \
+          -basedir examples/playwright -baseurl http://localhost:8000 \
+          -workers 4 -fail-fast \
+          -report logs/experiment/e4_report_${i}.json \
+          -snapshot logs/experiment/e4_snapshot_${i}.json || true
+        END=$(date +%s.%N)
+        kill $SERVER_PID 2>/dev/null || true
+
+        # The same broken application, without the orchestrator: every test runs
+        # and every test fails.
+        DEMO_BREAK=login node examples/demo-app/server.js 8000 &
+        SERVER_PID=$!
+        sleep 1
+
+        BSTART=$(date +%s.%N)
+        npx playwright test tests/baseline.spec.ts --workers=4 \
+          --config=examples/playwright/playwright.config.ts || true
+        BEND=$(date +%s.%N)
+        kill $SERVER_PID 2>/dev/null || true
+
+        python3 - "$i" "$START" "$END" "$BSTART" "$BEND" << 'PYTHON'
+      import json, sys
+      run, s1, e1, s2, e2 = sys.argv[1:6]
+      for config, start, end in (("e4", s1, e1), ("e4b", s2, e2)):
+          with open(f"logs/experiment/{config}_run_{run}.json", "w") as f:
+              json.dump({"config": config, "run": int(run),
+                         "wall_clock_seconds": float(end) - float(start), "exit_code": 0}, f)
+      PYTHON
+      done
+  artifacts:
+    name: "e4-failfast-results"
+    paths:
+      - logs/experiment/e4_run_*.json
+      - logs/experiment/e4b_run_*.json
+      - logs/experiment/e4_report_*.json
+    expire_in: 7 days
+
+# ─── Stage 6: Statistical comparison ──────────────────────────────
 
 compare-all:
   stage: compare
   image: python:3.12
-  needs: [e2-sequential, e3-parallel]
+  needs: [e1-baseline, e2-sequential, e3-parallel, e4-failfast]
   script:
-    - pip install scipy numpy --quiet
+    - pip install scipy numpy matplotlib --quiet
+    # The E2/E3 jobs report through the orchestrator's own report.json, which
+    # analyze.py reads once every configuration is in the same directory.
+    - mkdir -p logs/experiment
+    - cp scrum-board/logs/experiment/e2_run_*.json logs/experiment/ 2>/dev/null || true
+    - cp scrum-board/logs/experiment/e3_run_*.json logs/experiment/ 2>/dev/null || true
     - |
       python3 - << 'PYTHON'
-      import json, math, statistics
+      # The orchestrator's report.json is not a run file; give analyze.py the
+      # shape it expects, so one script does the statistics for every job.
+      import glob, json, os
 
-      def load(path):
-          with open(path) as f:
-              return json.load(f)
-
-      def t_test(a, b):
-          n = len(a)
-          ma, mb = statistics.mean(a), statistics.mean(b)
-          va, vb = statistics.variance(a), statistics.variance(b)
-          se = math.sqrt(va/n + vb/n)
-          return (ma - mb) / se if se > 0 else 0
-
-      e2 = load("scrum-board/logs/experiment/e2_summary.json")
-      e3 = load("scrum-board/logs/experiment/e3_summary.json")
-
-      m2 = e2["mean"]
-      m3 = e3["mean"]
-
-      t23 = t_test(e2["durations_seconds"], e3["durations_seconds"])
-      t_cr = 2.101  # df=18, alpha=0.05
-
-      result = {
-          "e2_mean": m2,
-          "e3_mean": m3,
-          "speedup_S23_parallel": round(m2/m3, 3) if m3 > 0 else None,
-          "t_statistic_E2_vs_E3": round(t23, 3),
-          "t_critical_005": t_cr,
-          "significant": abs(t23) > t_cr,
-          "efficiency_eta": round(7.40 / m3, 3) if m3 > 0 else None,
-      }
-
-      with open("scrum-board/logs/experiment/comparison_e2_e3.json", "w") as f:
-          json.dump(result, f, indent=2)
-
-      print("=" * 55)
-      print("STATISTICAL COMPARISON E2 vs E3")
-      print("=" * 55)
-      speedup = result['speedup_S23_parallel']
-      eta = result['efficiency_eta']
-      print(f"E2 Sequential mean: {m2:.2f}s")
-      print(f"E3 Parallel mean:   {m3:.2f}s")
-      print(f"Speedup S23:        {f'{speedup:.2f}x' if speedup is not None else 'N/A'}")
-      print(f"t-statistic:        {result['t_statistic_E2_vs_E3']:.3f}")
-      print(f"t-critical (0.05):  {t_cr}")
-      sig = "✓ SIGNIFICANT" if result["significant"] else "✗ NOT SIGNIFICANT"
-      print(f"Result:             {sig}")
-      print(f"Efficiency η:       {f'{eta:.3f}' if eta is not None else 'N/A'}")
-      print("=" * 55)
+      for config in ("e2", "e3"):
+          for path in sorted(glob.glob(f"logs/experiment/{config}_run_*.json")):
+              with open(path) as f:
+                  data = json.load(f)
+              if "wall_clock_seconds" in data:
+                  continue  # already a run file
+              run = int(os.path.basename(path).split("_run_")[1].split(".")[0])
+              with open(path, "w") as f:
+                  json.dump({
+                      "config": config,
+                      "run": run,
+                      "wall_clock_seconds": data.get("total_duration_ms", 0) / 1000,
+                      "exit_code": 0,
+                      "total_tests": data.get("total_tests"),
+                      "passed": data.get("passed"),
+                      "failed": data.get("failed"),
+                      "skipped": data.get("skipped"),
+                      "worker_seconds": data.get("worker_seconds"),
+                      "utilization": data.get("utilization"),
+                      "workers": data.get("workers"),
+                  }, f)
       PYTHON
+    # Welch's t-test, Cohen's d and 95% confidence intervals, against the
+    # measured E1 baseline rather than a constant written into this file.
+    - python3 experiments/analyze.py logs/experiment -o logs/experiment
 
   artifacts:
     name: "experiment-final-results"
     paths:
-      - scrum-board/logs/experiment/e2_summary.json
-      - scrum-board/logs/experiment/e3_summary.json
-      - scrum-board/logs/experiment/comparison_e2_e3.json
+      - logs/experiment/results.md
+      - logs/experiment/results.json
+      - logs/experiment/*.png
     expire_in: 30 days
