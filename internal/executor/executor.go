@@ -6,6 +6,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"playdag/internal/loader"
 	"playdag/internal/protocol"
@@ -31,4 +32,18 @@ type Result struct {
 // ran and reported a failure, which is a normal outcome.
 type Executor interface {
 	Run(ctx context.Context, node *loader.TestNode, in Input) (Result, error)
+}
+
+// Names lists the executors New accepts, for CLI help and error messages.
+var Names = []string{"process"}
+
+// New builds the executor selected by name. baseDir resolves script paths and
+// baseURL points at the system under test.
+func New(name, baseDir, baseURL string) (Executor, error) {
+	switch name {
+	case "process":
+		return NewProcess(baseDir, baseURL), nil
+	default:
+		return nil, fmt.Errorf("executor: unknown executor %q (want one of %v)", name, Names)
+	}
 }

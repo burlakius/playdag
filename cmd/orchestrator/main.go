@@ -28,6 +28,7 @@ func main() {
 	timeoutFlag  := flag.Int("timeout",     300,                           "global timeout in seconds")
 	jsonFlag     := flag.Bool("json",       false,                         "emit machine-readable JSON event log")
 	agentsFlag   := flag.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
+	executorFlag := flag.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent)")
 	flag.Parse()
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -57,11 +58,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	exec, err := executor.New(*executorFlag, *basedirFlag, *baseurlFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
 	s := store.NewContextStore(*snapshotFlag)
 	r := runner.NewRunner(dag, s, runner.RunOptions{
 		MaxConcurrency: *workersFlag,
 		JSONLog:        *jsonFlag,
-		Executor:       executor.NewProcess(*basedirFlag, *baseurlFlag),
+		Executor:       exec,
 		Agents:         agents,
 	})
 
