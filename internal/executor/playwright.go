@@ -63,6 +63,7 @@ func (e *PlaywrightExecutor) Run(ctx context.Context, node *loader.TestNode, in 
 	defer os.Remove(resultPath)
 
 	cmd := exec.CommandContext(ctx, "npx", playwrightArgs(node)...)
+	killGroup(cmd)
 	cmd.Dir = e.baseDir
 	cmd.Env = append(os.Environ(),
 		protocol.ContextEnv+"="+string(payload),

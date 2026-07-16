@@ -50,6 +50,7 @@ func (e *ProcessExecutor) Run(ctx context.Context, node *loader.TestNode, in Inp
 
 	argv := command(filepath.Join(e.baseDir, node.Script))
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	killGroup(cmd)
 	cmd.Stdin = bytes.NewReader(payload)
 	cmd.Env = append(os.Environ(), protocol.ContextEnv+"="+string(payload))
 	if e.baseURL != "" {
