@@ -244,3 +244,103 @@ func TestSaveJSON_CarriesFlaky(t *testing.T) {
 		t.Fatalf("flaky data lost in the JSON report: %+v", got)
 	}
 }
+
+func TestCosts_Utilization(t *testing.T) {
+	// Two agents held open for 10s = 20 agent-seconds of capacity; the nodes used
+	// 5s of it.
+	r := &Report{
+		TotalDuration: 10 * time.Second,
+		Workers:       2,
+		Results: map[string]runner.AgentResult{
+			"a": {Status: "PASSED", Duration: 3 * time.Second},
+			"b": {Status: "PASSED", Duration: 2 * time.Second},
+		},
+	}
+
+	cost := Costs(r)
+	if cost.WorkerSeconds != 5 {
+		t.Errorf("worker-seconds: want 5, got %v", cost.WorkerSeconds)
+	}
+	if cost.Utilization != 0.25 {
+		t.Errorf("utilization: want 0.25, got %v", cost.Utilization)
+	}
+	if cost.WallClock != 10*time.Second {
+		t.Errorf("wall clock: got %v", cost.WallClock)
+	}
+}
+
+// A run with no wall clock yet must not divide by zero.
+func TestCosts_ZeroDuration(t *testing.T) {
+	cost := Costs(&Report{Workers: 4, Results: map[string]runner.AgentResult{}})
+	if cost.Utilization != 0 {
+		t.Fatalf("want 0, got %v", cost.Utilization)
+	}
+}
+
+func TestCosts_CountsCachedNodes(t *testing.T) {
+	r := &Report{
+		TotalDuration: time.Second,
+		Workers:       1,
+		Results: map[string]runner.AgentResult{
+			"ran":    {Status: "PASSED", Duration: time.Second},
+			"cached": {Status: "PASSED", Cached: true},
+		},
+	}
+	if got := Costs(r).Cached; got != 1 {
+		t.Fatalf("want 1 reused node, got %d", got)
+	}
+}
+
+func TestGenerate_ShowsCostMetrics(t *testing.T) {
+	r := &Report{
+		SuiteID:       "s",
+		TotalDuration: 10 * time.Second,
+		Workers:       2,
+		NodeOrder:     []string{"a"},
+		Results:       map[string]runner.AgentResult{"a": {Status: "PASSED", Duration: 5 * time.Second}},
+	}
+
+	out := Generate(r)
+	for _, want := range []string{"Wall clock:", "Worker-seconds:", "Utilization:     25.0%", "2 agent(s)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report should show %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSaveJSON_CarriesCostMetrics(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	r := &Report{
+		SuiteID:       "s",
+		TotalDuration: 10 * time.Second,
+		Workers:       2,
+		NodeOrder:     []string{"a"},
+		Results:       map[string]runner.AgentResult{"a": {Status: "PASSED", Duration: 5 * time.Second}},
+	}
+	if err := SaveJSON(r, path); err != nil {
+		t.Fatalf("SaveJSON: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var got struct {
+		Workers       int     `json:"workers"`
+		Utilization   float64 `json:"utilization"`
+		WorkerSeconds float64 `json:"worker_seconds"`
+		// Fields the CI pipeline reads; they must not move.
+		TotalTests      int     `json:"total_tests"`
+		Passed          int     `json:"passed"`
+		TotalDurationMs float64 `json:"total_duration_ms"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Workers != 2 || got.Utilization != 0.25 || got.WorkerSeconds != 5 {
+		t.Errorf("cost metrics: %+v", got)
+	}
+	if got.TotalTests != 1 || got.Passed != 1 || got.TotalDurationMs != 10000 {
+		t.Errorf("the fields CI reads must keep working: %+v", got)
+	}
+}

@@ -180,6 +180,7 @@ func run(args []string) {
 		Results:         r.Results(),
 		ContextSnapshot: s.Snapshot(),
 		NodeOrder:       nodeOrder,
+		Workers:         r.AgentCount(),
 	}
 
 	// In JSON mode stdout carries only the event stream; the boxed summary goes

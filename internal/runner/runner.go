@@ -99,6 +99,13 @@ func defaultAgents(tags []string, n int) []*scheduler.Agent {
 	return agents
 }
 
+// AgentCount reports how many agents the run had. It is the denominator of any
+// utilisation figure, and it is not always the -workers value: an explicit agent
+// pool sets its own size.
+func (r *Runner) AgentCount() int {
+	return r.agents
+}
+
 // Results returns a copy of all collected AgentResults, keyed by test_id.
 func (r *Runner) Results() map[string]AgentResult {
 	r.mu.Lock()

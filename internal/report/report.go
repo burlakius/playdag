@@ -24,6 +24,37 @@ type Report struct {
 	Results         map[string]runner.AgentResult
 	ContextSnapshot map[string]store.ContextValue
 	NodeOrder       []string // original suite order used for display
+	Workers         int      // agents the run had, the denominator of utilisation
+}
+
+// Cost is what the run cost the CI machine it ran on. Wall clock is what a
+// developer waits; worker-seconds is what is actually paid for, and the gap
+// between them is what parallelism buys.
+type Cost struct {
+	WallClock     time.Duration
+	WorkerSeconds float64
+	// Utilization is worker-seconds over the capacity the run held open:
+	// agents × wall clock. Low utilisation means agents sat idle waiting on the
+	// dependency graph, which is the cost the orchestration is meant to cut.
+	Utilization float64
+	// Cached counts nodes that did not run because a previous run had already
+	// produced their global values — the repeated setup that was skipped.
+	Cached int
+}
+
+// Costs measures what the run cost.
+func Costs(r *Report) Cost {
+	c := Cost{WallClock: r.TotalDuration}
+	for _, res := range r.Results {
+		c.WorkerSeconds += res.Duration.Seconds()
+		if res.Cached {
+			c.Cached++
+		}
+	}
+	if capacity := float64(r.Workers) * r.TotalDuration.Seconds(); capacity > 0 {
+		c.Utilization = c.WorkerSeconds / capacity
+	}
+	return c
 }
 
 const (
@@ -120,13 +151,23 @@ func Generate(r *Report) string {
 
 	// ── performance ──────────────────────────────────────────
 	sb.WriteString(section("Performance"))
+	cost := Costs(r)
+	fmt.Fprintf(&sb, "Wall clock:      %.2fs\n", cost.WallClock.Seconds())
+	fmt.Fprintf(&sb, "Worker-seconds:  %.2fs  (what the CI machine was paid for)\n", cost.WorkerSeconds)
+	if r.Workers > 0 {
+		fmt.Fprintf(&sb, "Utilization:     %.1f%%  (%d agent(s))\n", 100*cost.Utilization, r.Workers)
+	}
+	if cost.Cached > 0 {
+		fmt.Fprintf(&sb, "Reused:          %d node(s) not run, already done by an earlier run\n", cost.Cached)
+	}
+	// Not a baseline: it assumes one worker would take exactly as long per node.
+	// A measured single-worker run is the honest comparison.
 	var speedup float64
 	if r.TotalDuration > 0 {
 		speedup = seqDuration.Seconds() / r.TotalDuration.Seconds()
 	}
-	fmt.Fprintf(&sb, "Sequential estimate: %.2fs (sum of all durations)\n", seqDuration.Seconds())
-	fmt.Fprintf(&sb, "Actual (parallel):   %.2fs\n", r.TotalDuration.Seconds())
-	fmt.Fprintf(&sb, "Speedup:             %.2fx\n", speedup)
+	fmt.Fprintf(&sb, "Serial estimate: %.2fs  (sum of node spans; an estimate, not a measured baseline)\n", seqDuration.Seconds())
+	fmt.Fprintf(&sb, "Speedup:         %.2fx  (against that estimate)\n", speedup)
 
 	// ── footer ───────────────────────────────────────────────
 	fmt.Fprintf(&sb, "╔%s╗\n", border)
@@ -177,6 +218,8 @@ func SaveJSON(r *Report, path string) error {
 		Skipped         int                           `json:"skipped"`
 		Flaky           int                           `json:"flaky"`
 		Cached          int                           `json:"cached"`
+		Workers         int                           `json:"workers"`
+		Utilization     float64                       `json:"utilization"`
 		WorkerSeconds   float64                       `json:"worker_seconds"`
 		Results         map[string]nodeResult         `json:"results"`
 		ContextSnapshot map[string]store.ContextValue `json:"context_snapshot"`
@@ -225,6 +268,8 @@ func SaveJSON(r *Report, path string) error {
 		Skipped:         skipped,
 		Flaky:           flaky,
 		Cached:          cached,
+		Workers:         r.Workers,
+		Utilization:     Costs(r).Utilization,
 		WorkerSeconds:   workerSeconds,
 		Results:         results,
 		ContextSnapshot: r.ContextSnapshot,
