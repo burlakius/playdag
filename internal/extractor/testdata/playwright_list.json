@@ -1,0 +1,111 @@
+{
+  "config": {
+    "rootDir": "__ROOT__/tests"
+  },
+  "suites": [
+    {
+      "title": "board.spec.ts",
+      "file": "board.spec.ts",
+      "specs": [
+        {
+          "title": "sign in",
+          "tests": [
+            {
+              "annotations": [
+                {
+                  "type": "playdag:id",
+                  "description": "auth.login"
+                },
+                {
+                  "type": "playdag:provides",
+                  "description": "session.token"
+                },
+                {
+                  "type": "playdag:criticality",
+                  "description": "BLOCKER"
+                },
+                {
+                  "type": "playdag:priority",
+                  "description": "10"
+                },
+                {
+                  "type": "playdag:tags",
+                  "description": "chromium"
+                }
+              ]
+            }
+          ],
+          "file": "board.spec.ts",
+          "line": 5
+        },
+        {
+          "title": "create a card",
+          "tests": [
+            {
+              "annotations": [
+                {
+                  "type": "playdag:id",
+                  "description": "card.create"
+                },
+                {
+                  "type": "playdag:requires",
+                  "description": "session.token"
+                },
+                {
+                  "type": "playdag:provides",
+                  "description": "card.id"
+                },
+                {
+                  "type": "playdag:criticality",
+                  "description": "BLOCKER"
+                },
+                {
+                  "type": "playdag:priority",
+                  "description": "5"
+                },
+                {
+                  "type": "playdag:tags",
+                  "description": "chromium"
+                }
+              ]
+            }
+          ],
+          "file": "board.spec.ts",
+          "line": 22
+        },
+        {
+          "title": "move a card to done",
+          "tests": [
+            {
+              "annotations": [
+                {
+                  "type": "playdag:id",
+                  "description": "card.move"
+                },
+                {
+                  "type": "playdag:requires",
+                  "description": "session.token,card.id"
+                },
+                {
+                  "type": "playdag:criticality",
+                  "description": "NON_CRITICAL"
+                },
+                {
+                  "type": "playdag:priority",
+                  "description": "1"
+                },
+                {
+                  "type": "playdag:tags",
+                  "description": "chromium"
+                }
+              ]
+            }
+          ],
+          "file": "board.spec.ts",
+          "line": 42
+        }
+      ]
+    }
+  ],
+  "errors": []
+}
