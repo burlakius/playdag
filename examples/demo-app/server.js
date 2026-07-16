@@ -10,6 +10,12 @@ const { randomUUID } = require('node:crypto');
 
 const port = Number(process.argv[2] ?? process.env.PORT ?? 8000);
 
+// Failure injection for the experiments: DEMO_BREAK=login makes signing in fail,
+// standing in for a regression in a dependency everything else needs. It is the
+// only way to measure what early termination saves, so it lives here rather than
+// in the tests, which must not know they are being sabotaged.
+const broken = process.env.DEMO_BREAK ?? '';
+
 const tokens = new Map(); // token → user
 const cards = new Map(); // id → { title, column }
 
@@ -115,6 +121,9 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/api/login') {
+    if (broken === 'login') {
+      return send(res, 500, { error: 'login is broken (DEMO_BREAK=login)' });
+    }
     const { user } = await readBody(req);
     if (!user) return send(res, 400, { error: 'user is required' });
     const token = randomUUID();
