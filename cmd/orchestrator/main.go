@@ -1,4 +1,7 @@
 // Command orchestrator is the CLI entry point for the playdag DAG executor.
+//
+//	orchestrator [flags]              run a suite
+//	orchestrator extract [flags]      generate a suite from the tests
 package main
 
 import (
@@ -7,9 +10,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"playdag/internal/executor"
+	"playdag/internal/extractor"
 	"playdag/internal/graph"
 	"playdag/internal/loader"
 	"playdag/internal/report"
@@ -19,17 +24,85 @@ import (
 )
 
 func main() {
-	suiteFlag    := flag.String("suite",    "tests/suite.json",           "path to suite.json")
-	basedirFlag  := flag.String("basedir",  ".",                           "base directory for python scripts")
-	baseurlFlag  := flag.String("baseurl",  "http://localhost:8000",       "BASE_URL for agents")
-	workersFlag  := flag.Int("workers",     4,                             "max concurrent agents")
-	snapshotFlag := flag.String("snapshot", "logs/context-snapshot.json",  "path for context snapshot JSON")
-	reportFlag   := flag.String("report",   "logs/report.json",            "path for JSON report output")
-	timeoutFlag  := flag.Int("timeout",     300,                           "global timeout in seconds")
-	jsonFlag     := flag.Bool("json",       false,                         "emit machine-readable JSON event log")
-	agentsFlag   := flag.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
-	executorFlag := flag.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent) or playwright")
-	flag.Parse()
+	args := os.Args[1:]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		if args[0] != "extract" {
+			fmt.Fprintf(os.Stderr, "error: unknown command %q (want: extract, or flags to run a suite)\n", args[0])
+			os.Exit(1)
+		}
+		if err := extract(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	run(args)
+}
+
+// extract generates a suite file from the metadata the tests declare.
+func extract(args []string) error {
+	fs := flag.NewFlagSet("extract", flag.ExitOnError)
+	extractorFlag := fs.String("extractor", "process",       "where metadata is read from: process (script headers) or playwright (test annotations)")
+	basedirFlag   := fs.String("basedir",   ".",             "directory holding the tests")
+	outFlag       := fs.String("o",         "suite.json",    "output path, or - for stdout")
+	suiteIDFlag   := fs.String("suite-id",  "",              "suite_id for the generated file; default: the basedir name")
+	timeoutFlag   := fs.Int("timeout",      120,             "timeout in seconds")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ex, err := extractor.New(*extractorFlag, *basedirFlag)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)
+	defer cancel()
+
+	nodes, err := ex.Extract(ctx)
+	if err != nil {
+		return err
+	}
+	if err := extractor.Validate(nodes); err != nil {
+		return err
+	}
+
+	suite := extractor.Suite(suiteID(*suiteIDFlag, *basedirFlag), nodes)
+	if err := extractor.Save(suite, *outFlag); err != nil {
+		return err
+	}
+
+	// The summary goes to stderr so that -o - stays a clean suite on stdout.
+	fmt.Fprintf(os.Stderr, "extracted %d node(s) into %s\n", len(nodes), *outFlag)
+	return nil
+}
+
+// suiteID falls back to the name of the directory the tests live in.
+func suiteID(explicit, baseDir string) string {
+	if explicit != "" {
+		return explicit
+	}
+	abs, err := filepath.Abs(baseDir)
+	if err != nil {
+		return "suite"
+	}
+	return filepath.Base(abs)
+}
+
+// run executes a suite and reports on it.
+func run(args []string) {
+	fs := flag.NewFlagSet("orchestrator", flag.ExitOnError)
+	suiteFlag    := fs.String("suite",    "tests/suite.json",           "path to suite.json")
+	basedirFlag  := fs.String("basedir",  ".",                           "base directory for python scripts")
+	baseurlFlag  := fs.String("baseurl",  "http://localhost:8000",       "BASE_URL for agents")
+	workersFlag  := fs.Int("workers",     4,                             "max concurrent agents")
+	snapshotFlag := fs.String("snapshot", "logs/context-snapshot.json",  "path for context snapshot JSON")
+	reportFlag   := fs.String("report",   "logs/report.json",            "path for JSON report output")
+	timeoutFlag  := fs.Int("timeout",     300,                           "global timeout in seconds")
+	jsonFlag     := fs.Bool("json",       false,                         "emit machine-readable JSON event log")
+	agentsFlag   := fs.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
+	executorFlag := fs.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent) or playwright")
+	fs.Parse(args)
 
 	suite, err := loader.LoadSuite(*suiteFlag)
 	if err != nil {
