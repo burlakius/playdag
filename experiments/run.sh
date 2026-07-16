@@ -112,10 +112,17 @@ run_baseline() {
   log "── $config: baseline playwright, workers=$workers ${brk:+(login broken)}"
   for i in $(seq 1 "$RUNS"); do
     start_server "$brk"
+    # --fully-parallel is what makes --workers mean anything: without it
+    # Playwright runs a file's tests in one worker, so a "parallel" baseline
+    # would quietly be a sequential one and every comparison against it would
+    # flatter the orchestrator. It is also what a generated Playwright config
+    # ships with, so this is the ordinary way to run these tests.
+    #
     # Retries are matched to the orchestrated suite's policy, not left at zero:
     # letting only one side retry a broken node would measure the policy rather
     # than the method.
-    time_it npx playwright test tests/baseline.spec.ts --workers="$workers" --retries="$retries" --config="$PROJECT/playwright.config.ts"
+    time_it npx playwright test tests/baseline.spec.ts --workers="$workers" --fully-parallel \
+      --retries="$retries" --config="$PROJECT/playwright.config.ts"
     stop_server
     record "$config" "$i" "$LAST_SECONDS" "$LAST_EXIT"
     log "   run $i/$RUNS: ${LAST_SECONDS}s (exit $LAST_EXIT)"
@@ -147,17 +154,24 @@ log "extracting the suite from the tests"
 
 : >"$OUT_DIR/run.log"
 
-run_baseline e1 1
-run_baseline e1p 4
-run_playdag e2 1
-run_playdag e3 4
-run_playdag e4 4 login "-fail-fast"
+# CONFIGS selects what to measure; the default is everything. Naming a subset is
+# for re-measuring one configuration after a fix, not for cherry-picking results.
+CONFIGS="${CONFIGS:-e1 e1p e2 e3 e4 e4b s1 s2 s4 s8}"
+wanted() { [[ " $CONFIGS " == *" $1 "* ]]; }
+
+wanted e1  && run_baseline e1 1
+wanted e1p && run_baseline e1p 4
+wanted e2  && run_playdag e2 1
+wanted e3  && run_playdag e3 4
+wanted e4  && run_playdag e4 4 login "-fail-fast"
 # The suite gives auth.login one retry, so the baseline gets one too.
-run_baseline e4b 4 login 1
+wanted e4b && run_baseline e4b 4 login 1
 
 for w in 1 2 4 8; do
-  run_playdag "s${w}" "$w"
+  wanted "s${w}" && run_playdag "s${w}" "$w"
 done
+
+true
 
 log ""
 log "wrote $(ls "$OUT_DIR"/*_run_*.json | wc -l) run files to $OUT_DIR"
