@@ -30,6 +30,7 @@ type AgentResult struct {
 	Duration  time.Duration       `json:"duration_ns,omitempty"` // total node time including retries
 	Attempts  int                 `json:"attempts,omitempty"`    // attempts the node took
 	Flaky     bool                `json:"flaky,omitempty"`       // passed, but only after a retry
+	Cached    bool                `json:"cached,omitempty"`      // not run: its global values survived a previous run
 }
 
 // RunOptions configures runner behaviour.
@@ -239,6 +240,17 @@ func (r *Runner) complete(c nodeCompletion) {
 // agents cannot run anywhere, so it fails here with that said plainly rather
 // than later with a missing key.
 func (r *Runner) push(node *loader.TestNode) {
+	if r.satisfied(node) {
+		r.log("CACHE", node.TestID, "already provided by a previous run (global scope)")
+		r.mu.Lock()
+		r.results[node.TestID] = AgentResult{Status: protocol.StatusPassed, Cached: true}
+		r.mu.Unlock()
+		for _, n := range r.dag.MarkPassed(node.TestID) {
+			r.push(n)
+		}
+		return
+	}
+
 	affinity, err := r.affinityFor(node)
 	if err != nil {
 		r.log("FAIL", node.TestID, err.Error())
@@ -254,6 +266,22 @@ func (r *Runner) push(node *loader.TestNode) {
 		return
 	}
 	r.sched.Push(node, affinity)
+}
+
+// satisfied reports whether a node has nothing left to do: it declares global
+// scope and every key it provides is already in the store, carried over from a
+// previous run. Doing the work again would only overwrite the same values —
+// this is the repeated setup the global scope exists to pay for once.
+func (r *Runner) satisfied(node *loader.TestNode) bool {
+	if node.Contract.Scope != store.ScopeGlobal || len(node.Contract.Provides) == 0 {
+		return false
+	}
+	for _, key := range node.Contract.Provides {
+		if _, ok := r.store.Get(key); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // affinityFor reports the agent a node must run on, or "" when it may run

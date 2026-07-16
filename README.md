@@ -4,6 +4,19 @@
 
 Values flow between tests through a shared context, so a session established by one test is reused by the tests that depend on it instead of being established again.
 
+Each value declares a **scope**, which decides how long it lives and who may see it:
+
+| Scope | Lives | Seen by |
+|-------|-------|---------|
+| `session` | one agent | only nodes on that agent, which are scheduled there for that reason |
+| `suite` (default) | the run | every node |
+| `global` | beyond the run, in `-global-context` | every node, including later runs |
+
+A node that declares `global` scope and whose provided keys are already in the
+context file is not run again: an expensive one-off setup is paid for once
+rather than once per run. It is opt-in — without `-global-context` nothing
+persists, and every node runs.
+
 The core is framework-agnostic: it speaks the [agent protocol](docs/PROTOCOL.md) and dispatches through an `Executor`. Playwright is one adapter ([`adapters/playwright`](adapters/playwright/README.md)), not a dependency — see [`examples/playwright`](examples/playwright/README.md) for a browser suite and [`examples/process`](examples/process/README.md) for the same graph run by plain Python agents.
 
 ## Architecture
@@ -117,6 +130,9 @@ is not meant to be edited.
 | `-report` | `logs/report.json` | JSON report output path |
 | `-timeout` | `300` | Global timeout in seconds |
 | `-json` | `false` | Emit a machine-readable JSON event log |
+| `-fail-fast` | `false` | Stop the run as soon as a BLOCKER node fails |
+| `-max-failures` | `0` | Stop after this many failed nodes; 0 = no limit |
+| `-global-context` | | File where `global`-scoped values persist between runs |
 
 `extract` takes `-extractor` (`process` or `playwright`), `-basedir`, `-o` (output path, `-` for stdout), `-suite-id` and `-timeout`.
 

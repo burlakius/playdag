@@ -615,3 +615,70 @@ func TestAffinityFor_TwoSessionsIsAnError(t *testing.T) {
 		t.Fatal("expected an error for keys from two agents")
 	}
 }
+
+// The literal saving the global scope exists for: work already done by an
+// earlier run is not done again.
+func TestRun_GlobalValuesFromAPreviousRunSkipTheNode(t *testing.T) {
+	f := newFake()
+	s := store.NewContextStore("")
+	// Stand in for a previous run having registered the account.
+	s.Set("account.id", "acct-777", "account.register", store.ScopeGlobal, "")
+
+	register := node("account.register", nil, []string{"account.id"})
+	register.Contract.Scope = store.ScopeGlobal
+	use := node("account.use", []string{"account.id"}, nil)
+
+	dag, err := graph.NewDAG([]loader.TestNode{register, use})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 2, Executor: f})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := r.Results()["account.register"]
+	if !got.Cached {
+		t.Error("the node should have been served from the previous run")
+	}
+	if f.attemptsFor("account.register") != 0 {
+		t.Error("the cached node must not have been executed")
+	}
+	// Its dependant still runs, and with the carried-over value.
+	if r.Results()["account.use"].Status != protocol.StatusPassed {
+		t.Fatalf("account.use: %+v", r.Results()["account.use"])
+	}
+	if f.contextFor("account.use")["account.id"] != "acct-777" {
+		t.Error("the dependant did not receive the carried-over value")
+	}
+}
+
+// Only global scope caches: a suite-scoped node runs every time, even if some
+// other run left a value of the same name lying around.
+func TestRun_SuiteScopedNodeIsNotCached(t *testing.T) {
+	f := newFake()
+	f.results["card.create"] = executor.Result{
+		Status:   protocol.StatusPassed,
+		Provides: map[string]string{"card.id": "42"},
+	}
+	s := store.NewContextStore("")
+	s.Set("card.id", "stale", "card.create", store.ScopeSuite, "")
+
+	create := node("card.create", nil, []string{"card.id"})
+	create.Contract.Scope = store.ScopeSuite
+
+	dag, err := graph.NewDAG([]loader.TestNode{create})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, s, RunOptions{MaxConcurrency: 1, Executor: f})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if r.Results()["card.create"].Cached {
+		t.Fatal("a suite-scoped node must not be served from the store")
+	}
+	if f.attemptsFor("card.create") != 1 {
+		t.Fatal("the node should have run")
+	}
+}

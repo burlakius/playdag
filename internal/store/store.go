@@ -44,6 +44,7 @@ type ContextStore struct {
 	mu           sync.RWMutex
 	values       map[valueKey]ContextValue
 	snapshotPath string
+	globalPath   string
 }
 
 // NewContextStore returns an empty store. snapshotPath may be empty to disable
@@ -53,6 +54,38 @@ func NewContextStore(snapshotPath string) *ContextStore {
 		values:       make(map[valueKey]ContextValue),
 		snapshotPath: snapshotPath,
 	}
+}
+
+// UseGlobalFile makes global-scoped values outlive the run: whatever the file
+// already holds is loaded now, and Flush writes the file back. A missing file is
+// simply an empty history, which is what the first run sees.
+func (s *ContextStore) UseGlobalFile(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.globalPath = path
+
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("store: read global context: %w", err)
+	}
+
+	var file snapshotFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return fmt.Errorf("store: parse global context %s: %w", path, err)
+	}
+	for key, cv := range file.Values {
+		// Only global values are carried over; anything else in the file belonged
+		// to a run that has ended.
+		if cv.Scope != ScopeGlobal {
+			continue
+		}
+		s.values[valueKey{key: key}] = cv
+	}
+	return nil
 }
 
 // Set stores a value produced by providedBy while running on session. A
@@ -151,27 +184,45 @@ type snapshotFile struct {
 	Values      map[string]ContextValue `json:"values"`
 }
 
-// Flush writes the current store contents to snapshotPath. It is a no-op when
-// no snapshot path was configured. Call it once the run is complete.
+// Flush writes the snapshot and, when one is configured, the global context
+// file. Call it once the run is complete.
 func (s *ContextStore) Flush() error {
-	if s.snapshotPath == "" {
-		return nil
-	}
-
 	s.mu.RLock()
-	cp := s.snapshot()
+	all := s.snapshot()
+	global := make(map[string]ContextValue)
+	for name, cv := range all {
+		if cv.Scope == ScopeGlobal {
+			global[name] = cv
+		}
+	}
+	globalPath, snapshotPath := s.globalPath, s.snapshotPath
 	s.mu.RUnlock()
 
+	if snapshotPath != "" {
+		if err := writeValues(snapshotPath, all); err != nil {
+			return err
+		}
+	}
+	if globalPath != "" {
+		if err := writeValues(globalPath, global); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeValues serialises a set of values to path.
+func writeValues(path string, values map[string]ContextValue) error {
 	payload := snapshotFile{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Values:      cp,
+		Values:      values,
 	}
 	b, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		return fmt.Errorf("store: marshal snapshot: %w", err)
+		return fmt.Errorf("store: marshal %s: %w", path, err)
 	}
-	if err := os.WriteFile(s.snapshotPath, b, 0o644); err != nil {
-		return fmt.Errorf("store: write snapshot: %w", err)
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		return fmt.Errorf("store: write %s: %w", path, err)
 	}
 	return nil
 }

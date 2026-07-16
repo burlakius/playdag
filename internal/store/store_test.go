@@ -219,3 +219,49 @@ func TestSnapshot_NamesSessionValuesByAgent(t *testing.T) {
 		t.Errorf("suite value should keep its plain name: %v", snap)
 	}
 }
+
+// A global value is the point of the scope: it outlives the run that produced it.
+func TestGlobalFile_ValuesSurviveAcrossStores(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.json")
+
+	first := NewContextStore("")
+	if err := first.UseGlobalFile(path); err != nil {
+		t.Fatalf("UseGlobalFile: %v", err)
+	}
+	first.Set("account.id", "acct-777", "account.register", ScopeGlobal, "agent-1")
+	first.Set("card.id", "42", "card.create", ScopeSuite, "agent-1")
+	if err := first.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	second := NewContextStore("")
+	if err := second.UseGlobalFile(path); err != nil {
+		t.Fatalf("UseGlobalFile: %v", err)
+	}
+
+	if got, ok := second.Get("account.id"); !ok || got != "acct-777" {
+		t.Errorf("the global value should have survived: got %q (ok=%v)", got, ok)
+	}
+	// Suite values belonged to a run that has ended.
+	if _, ok := second.Get("card.id"); ok {
+		t.Error("a suite-scoped value must not outlive its run")
+	}
+}
+
+func TestGlobalFile_MissingFileIsAnEmptyHistory(t *testing.T) {
+	s := NewContextStore("")
+	if err := s.UseGlobalFile(filepath.Join(t.TempDir(), "absent.json")); err != nil {
+		t.Fatalf("the first run has no file yet; that is not an error: %v", err)
+	}
+}
+
+func TestGlobalFile_BrokenFileIsAnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "global.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	s := NewContextStore("")
+	if err := s.UseGlobalFile(path); err == nil {
+		t.Fatal("expected an error for an unreadable global context")
+	}
+}

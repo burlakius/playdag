@@ -50,7 +50,7 @@ func Generate(r *Report) string {
 	// ── results ─────────────────────────────────────────────
 	sb.WriteString(section("Results"))
 
-	var passed, failed, skipped, flaky int
+	var passed, failed, skipped, flaky, cached int
 	var seqDuration time.Duration
 
 	for _, id := range r.NodeOrder {
@@ -62,6 +62,11 @@ func Generate(r *Report) string {
 		case "PASSED":
 			passed++
 			seqDuration += res.Duration
+			if res.Cached {
+				cached++
+				fmt.Fprintf(&sb, "◆ CACHED  %-20s        reused from a previous run\n", id)
+				break
+			}
 			if res.Flaky {
 				flaky++
 				fmt.Fprintf(&sb, "⚠ FLAKY   %-20s %.2fs  passed on attempt %d\n", id, res.Duration.Seconds(), res.Attempts)
@@ -94,6 +99,10 @@ func Generate(r *Report) string {
 		if flaky > 0 {
 			// Counted inside Passed: the node did pass, but not on its own terms.
 			fmt.Fprintf(&sb, "Flaky:    %d  (of the passed)\n", flaky)
+		}
+		if cached > 0 {
+			// Also inside Passed: nothing ran, because the work was already done.
+			fmt.Fprintf(&sb, "Cached:   %d  (of the passed)\n", cached)
 		}
 	}
 
@@ -155,6 +164,7 @@ func SaveJSON(r *Report, path string) error {
 		Artifacts  []protocol.Artifact `json:"artifacts,omitempty"`
 		Attempts   int                 `json:"attempts,omitempty"`
 		Flaky      bool                `json:"flaky,omitempty"`
+		Cached     bool                `json:"cached,omitempty"`
 	}
 	type jsonReport struct {
 		SuiteID         string                        `json:"suite_id"`
@@ -166,6 +176,7 @@ func SaveJSON(r *Report, path string) error {
 		Failed          int                           `json:"failed"`
 		Skipped         int                           `json:"skipped"`
 		Flaky           int                           `json:"flaky"`
+		Cached          int                           `json:"cached"`
 		WorkerSeconds   float64                       `json:"worker_seconds"`
 		Results         map[string]nodeResult         `json:"results"`
 		ContextSnapshot map[string]store.ContextValue `json:"context_snapshot"`
@@ -173,7 +184,7 @@ func SaveJSON(r *Report, path string) error {
 	}
 
 	results := make(map[string]nodeResult, len(r.Results))
-	var passed, failed, skipped, flaky int
+	var passed, failed, skipped, flaky, cached int
 	var workerSeconds float64
 	for id, res := range r.Results {
 		results[id] = nodeResult{
@@ -184,10 +195,14 @@ func SaveJSON(r *Report, path string) error {
 			Artifacts:  res.Artifacts,
 			Attempts:   res.Attempts,
 			Flaky:      res.Flaky,
+			Cached:     res.Cached,
 		}
 		workerSeconds += res.Duration.Seconds()
 		if res.Flaky {
 			flaky++
+		}
+		if res.Cached {
+			cached++
 		}
 		switch res.Status {
 		case "PASSED":
@@ -209,6 +224,7 @@ func SaveJSON(r *Report, path string) error {
 		Failed:          failed,
 		Skipped:         skipped,
 		Flaky:           flaky,
+		Cached:          cached,
 		WorkerSeconds:   workerSeconds,
 		Results:         results,
 		ContextSnapshot: r.ContextSnapshot,

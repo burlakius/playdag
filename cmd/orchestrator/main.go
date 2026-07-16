@@ -92,18 +92,19 @@ func suiteID(explicit, baseDir string) string {
 // run executes a suite and reports on it.
 func run(args []string) {
 	fs := flag.NewFlagSet("orchestrator", flag.ExitOnError)
-	suiteFlag    := fs.String("suite",    "tests/suite.json",           "path to suite.json")
-	basedirFlag  := fs.String("basedir",  ".",                           "base directory for python scripts")
-	baseurlFlag  := fs.String("baseurl",  "http://localhost:8000",       "BASE_URL for agents")
-	workersFlag  := fs.Int("workers",     4,                             "max concurrent agents")
-	snapshotFlag := fs.String("snapshot", "logs/context-snapshot.json",  "path for context snapshot JSON")
-	reportFlag   := fs.String("report",   "logs/report.json",            "path for JSON report output")
-	timeoutFlag  := fs.Int("timeout",     300,                           "global timeout in seconds")
-	jsonFlag     := fs.Bool("json",       false,                         "emit machine-readable JSON event log")
-	agentsFlag   := fs.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
-	executorFlag := fs.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent) or playwright")
-	failfastFlag := fs.Bool("fail-fast",  false,                         "stop the run as soon as a BLOCKER node fails")
-	maxfailFlag  := fs.Int("max-failures", 0,                            "stop after this many failed nodes; 0 = no limit")
+	suiteFlag    := fs.String("suite",          "tests/suite.json",           "path to suite.json")
+	basedirFlag  := fs.String("basedir",        ".",                          "base directory for agent scripts or the test project")
+	baseurlFlag  := fs.String("baseurl",        "http://localhost:8000",      "BASE_URL for agents")
+	workersFlag  := fs.Int("workers",           4,                            "max concurrent agents")
+	snapshotFlag := fs.String("snapshot",       "logs/context-snapshot.json", "path for context snapshot JSON")
+	reportFlag   := fs.String("report",         "logs/report.json",           "path for JSON report output")
+	timeoutFlag  := fs.Int("timeout",           300,                          "global timeout in seconds")
+	jsonFlag     := fs.Bool("json",             false,                        "emit machine-readable JSON event log")
+	agentsFlag   := fs.String("agents",         "",                           "agent pool as JSON file or inline; default: universal agents")
+	executorFlag := fs.String("executor",       "process",                    "how nodes are run: process (any protocol-speaking agent) or playwright")
+	failfastFlag := fs.Bool("fail-fast",        false,                        "stop the run as soon as a BLOCKER node fails")
+	maxfailFlag  := fs.Int("max-failures",      0,                            "stop after this many failed nodes; 0 = no limit")
+	globalFlag   := fs.String("global-context", "",                           "file where global-scoped values persist between runs; empty = off")
 	fs.Parse(args)
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -140,6 +141,12 @@ func run(args []string) {
 	}
 
 	s := store.NewContextStore(*snapshotFlag)
+	if *globalFlag != "" {
+		if err := s.UseGlobalFile(*globalFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	r := runner.NewRunner(dag, s, runner.RunOptions{
 		MaxConcurrency: *workersFlag,
 		JSONLog:        *jsonFlag,
