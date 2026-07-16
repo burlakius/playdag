@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"playdag/internal/protocol"
 	"playdag/internal/runner"
 	"playdag/internal/store"
 )
@@ -66,6 +67,10 @@ func Generate(r *Report) string {
 			failed++
 			seqDuration += res.Duration
 			fmt.Fprintf(&sb, "✗ FAILED  %-20s %s\n", id, res.Error)
+			// A failure is where a trace or a video is actually worth reading.
+			for _, a := range res.Artifacts {
+				fmt.Fprintf(&sb, "           %-8s %s\n", a.Type, a.Path)
+			}
 		case "SKIPPED":
 			skipped++
 			fmt.Fprintf(&sb, "↷ SKIPPED %-20s %s\n", id, res.Error)
@@ -134,10 +139,11 @@ func section(title string) string {
 // ones consumed by the CI experiment scripts.
 func SaveJSON(r *Report, path string) error {
 	type nodeResult struct {
-		Status     string            `json:"status"`
-		DurationMs float64           `json:"duration_ms"`
-		Error      string            `json:"error,omitempty"`
-		Provides   map[string]string `json:"provides,omitempty"`
+		Status     string              `json:"status"`
+		DurationMs float64             `json:"duration_ms"`
+		Error      string              `json:"error,omitempty"`
+		Provides   map[string]string   `json:"provides,omitempty"`
+		Artifacts  []protocol.Artifact `json:"artifacts,omitempty"`
 	}
 	type jsonReport struct {
 		SuiteID         string                        `json:"suite_id"`
@@ -163,6 +169,7 @@ func SaveJSON(r *Report, path string) error {
 			DurationMs: res.Duration.Seconds() * 1000,
 			Error:      res.Error,
 			Provides:   res.Provides,
+			Artifacts:  res.Artifacts,
 		}
 		workerSeconds += res.Duration.Seconds()
 		switch res.Status {

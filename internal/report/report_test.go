@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"playdag/internal/protocol"
 	"playdag/internal/runner"
 	"playdag/internal/store"
 )
@@ -136,5 +137,58 @@ func TestGenerate_SkippedShowsBlockedBy(t *testing.T) {
 	}
 	if !strings.Contains(out, "blocked by: auth.login") {
 		t.Errorf("expected 'blocked by: auth.login' in output, got:\n%s", out)
+	}
+}
+
+func TestGenerate_FailedNodeListsArtifacts(t *testing.T) {
+	r := &Report{
+		SuiteID:   "s",
+		NodeOrder: []string{"card.create"},
+		Results: map[string]runner.AgentResult{
+			"card.create": {
+				Status:    "FAILED",
+				Error:     "timed out",
+				Artifacts: []protocol.Artifact{{Type: "trace", Path: "test-results/card/trace.zip"}},
+			},
+		},
+	}
+
+	out := Generate(r)
+	if !strings.Contains(out, "test-results/card/trace.zip") {
+		t.Fatalf("artifact path missing from the report:\n%s", out)
+	}
+}
+
+func TestSaveJSON_CarriesArtifacts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	r := &Report{
+		SuiteID:   "s",
+		NodeOrder: []string{"card.create"},
+		Results: map[string]runner.AgentResult{
+			"card.create": {
+				Status:    "PASSED",
+				Artifacts: []protocol.Artifact{{Type: "video", Path: "test-results/card/video.webm"}},
+			},
+		},
+	}
+	if err := SaveJSON(r, path); err != nil {
+		t.Fatalf("SaveJSON: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	var got struct {
+		Results map[string]struct {
+			Artifacts []protocol.Artifact `json:"artifacts"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse report: %v", err)
+	}
+	arts := got.Results["card.create"].Artifacts
+	if len(arts) != 1 || arts[0].Type != "video" || arts[0].Path != "test-results/card/video.webm" {
+		t.Fatalf("artifacts lost in the JSON report: %+v", arts)
 	}
 }

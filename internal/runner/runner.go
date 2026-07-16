@@ -22,10 +22,11 @@ import (
 // AgentResult is the outcome recorded for one node. Duration is measured by the
 // runner and covers every attempt, so it is not part of the agent protocol.
 type AgentResult struct {
-	Status   string            `json:"status"` // "PASSED", "FAILED", or "SKIPPED"
-	Provides map[string]string `json:"provides"`
-	Error    string            `json:"error"`
-	Duration time.Duration     `json:"duration_ns,omitempty"` // total node time including retries
+	Status    string              `json:"status"` // "PASSED", "FAILED", or "SKIPPED"
+	Provides  map[string]string   `json:"provides"`
+	Error     string              `json:"error"`
+	Artifacts []protocol.Artifact `json:"artifacts,omitempty"`   // files the agent produced: trace, video, screenshot
+	Duration  time.Duration       `json:"duration_ns,omitempty"` // total node time including retries
 }
 
 // RunOptions configures runner behaviour.
@@ -220,7 +221,7 @@ func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, attempt in
 		return AgentResult{Status: protocol.StatusFailed, Error: msg}
 	}
 
-	return AgentResult{Status: res.Status, Provides: res.Provides, Error: res.Error}
+	return AgentResult{Status: res.Status, Provides: res.Provides, Error: res.Error, Artifacts: res.Artifacts}
 }
 
 // log emits a single execution event to stdout, either as a human-readable line
