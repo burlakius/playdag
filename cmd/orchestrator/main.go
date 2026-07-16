@@ -2,6 +2,7 @@
 //
 //	orchestrator [flags]              run a suite
 //	orchestrator extract [flags]      generate a suite from the tests
+//	orchestrator graph [flags]        render the suite's dependency graph
 package main
 
 import (
@@ -10,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,17 +28,76 @@ import (
 func main() {
 	args := os.Args[1:]
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		if args[0] != "extract" {
-			fmt.Fprintf(os.Stderr, "error: unknown command %q (want: extract, or flags to run a suite)\n", args[0])
+		cmd, ok := commands[args[0]]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: unknown command %q (want one of %v, or flags to run a suite)\n",
+				args[0], commandNames())
 			os.Exit(1)
 		}
-		if err := extract(args[1:]); err != nil {
+		if err := cmd(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 	run(args)
+}
+
+// commands are the subcommands; anything else is flags for a run.
+var commands = map[string]func([]string) error{
+	"extract": extract,
+	"graph":   graphCmd,
+}
+
+func commandNames() []string {
+	names := make([]string, 0, len(commands))
+	for name := range commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// graphCmd renders the suite's dependency graph for documentation.
+func graphCmd(args []string) error {
+	fs := flag.NewFlagSet("graph", flag.ExitOnError)
+	suiteFlag  := fs.String("suite",  "tests/suite.json", "path to suite.json")
+	formatFlag := fs.String("format", "mermaid",          "mermaid or dot")
+	outFlag    := fs.String("o",      "-",                "output path, or - for stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	suite, err := loader.LoadSuite(*suiteFlag)
+	if err != nil {
+		return err
+	}
+	// Building the real DAG also validates it, so a graph is never rendered for a
+	// suite that could not run.
+	dag, err := graph.NewDAG(suite.Nodes)
+	if err != nil {
+		return err
+	}
+
+	var out string
+	switch *formatFlag {
+	case "mermaid":
+		out = dag.Mermaid()
+	case "dot":
+		out = dag.DOT()
+	default:
+		return fmt.Errorf("unknown format %q (want mermaid or dot)", *formatFlag)
+	}
+
+	if *outFlag == "-" {
+		fmt.Print(out)
+		return nil
+	}
+	if err := os.WriteFile(*outFlag, []byte(out), 0o644); err != nil {
+		return fmt.Errorf("write graph: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s\n", *outFlag)
+	return nil
 }
 
 // extract generates a suite file from the metadata the tests declare.

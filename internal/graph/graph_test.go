@@ -234,3 +234,80 @@ func TestNewDAG_MissingKey(t *testing.T) {
 		t.Fatalf("expected key name in error, got: %v", err)
 	}
 }
+
+// exportDAG builds the example shape: login → create → move, with move also
+// depending on the login directly.
+func exportDAG(t *testing.T) *DAG {
+	t.Helper()
+	nodes := []loader.TestNode{
+		node("auth.login", "BLOCKER", nil, []string{"session.token"}),
+		node("card.create", "BLOCKER", []string{"session.token"}, []string{"card.id"}),
+		node("card.move", "NON_CRITICAL", []string{"session.token", "card.id"}, nil),
+	}
+	dag, err := NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	return dag
+}
+
+// The edge labels are the point of the picture: they show the graph comes from
+// data contracts, not from a hand-written order.
+func TestMermaid_EdgesAreLabelledWithTheKey(t *testing.T) {
+	out := exportDAG(t).Mermaid()
+
+	for _, want := range []string{
+		"flowchart TD",
+		`auth_login["auth.login"]`,
+		"auth_login -->|session.token| card_create",
+		"card_create -->|card.id| card_move",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mermaid should contain %q:\n%s", want, out)
+		}
+	}
+}
+
+// A test id contains dots, which a Mermaid identifier may not.
+func TestMermaid_IDsAreSanitised(t *testing.T) {
+	out := exportDAG(t).Mermaid()
+	if strings.Contains(out, "auth.login[") {
+		t.Errorf("a raw dotted id would not parse as a mermaid node:\n%s", out)
+	}
+}
+
+func TestMermaid_NonCriticalNodesAreMarked(t *testing.T) {
+	out := exportDAG(t).Mermaid()
+	if !strings.Contains(out, "class card_move nonCritical") {
+		t.Errorf("the non-critical node should be drawn apart:\n%s", out)
+	}
+	if strings.Contains(out, "class auth_login nonCritical") {
+		t.Errorf("a blocker must not be marked non-critical:\n%s", out)
+	}
+}
+
+func TestDOT_Structure(t *testing.T) {
+	out := exportDAG(t).DOT()
+	for _, want := range []string{
+		"digraph playdag {",
+		`"auth.login" -> "card.create" [label="session.token"];`,
+		`"card.move" [style=dashed];`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dot should contain %q:\n%s", want, out)
+		}
+	}
+}
+
+// The same suite must render the same file, or the diagram in the write-up
+// churns on every regeneration.
+func TestExport_IsDeterministic(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		if got, want := exportDAG(t).Mermaid(), exportDAG(t).Mermaid(); got != want {
+			t.Fatalf("mermaid output is not stable:\n%s\nvs\n%s", got, want)
+		}
+		if got, want := exportDAG(t).DOT(), exportDAG(t).DOT(); got != want {
+			t.Fatalf("dot output is not stable:\n%s\nvs\n%s", got, want)
+		}
+	}
+}
