@@ -279,11 +279,50 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 			r.log("SKIP", node.TestID, result.Error)
 			return result
 		}
+
+		if attempt < maxAttempts {
+			if wait := retryDelay(node.Policy, attempt); wait > 0 {
+				r.log("WAIT", node.TestID, fmt.Sprintf("%s before retry %d", wait, attempt+1))
+				select {
+				case <-time.After(wait):
+				case <-ctx.Done():
+					result = AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}
+					result.Duration = time.Since(nodeStart)
+					r.log("SKIP", node.TestID, result.Error)
+					return result
+				}
+			}
+		}
 	}
 
 	result.Duration = time.Since(nodeStart)
 	r.log("FAIL", node.TestID, result.Error)
 	return result
+}
+
+// retryDelay is how long to wait before the attempt after this one. Retrying a
+// flaky network test instantly mostly re-hits whatever was still broken, so the
+// delay is the point; exponential backoff doubles it per attempt.
+func retryDelay(p loader.ExecutionPolicy, attempt int) time.Duration {
+	if p.RetryDelay == "" {
+		return 0
+	}
+	base, err := time.ParseDuration(p.RetryDelay)
+	if err != nil {
+		return 0
+	}
+	if p.Backoff != "exponential" {
+		return base
+	}
+	return base << (attempt - 1)
+}
+
+// cancelReason renders why the run tore this node down.
+func cancelReason(ctx context.Context) string {
+	if cause := context.Cause(ctx); cause != nil {
+		return "cancelled: " + cause.Error()
+	}
+	return "cancelled"
 }
 
 // execNode resolves the node's required context and hands one attempt to the
@@ -310,7 +349,7 @@ func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, attempt in
 		// The run tearing this node down is not the node failing: report what
 		// actually happened, or the report would blame a test for being killed.
 		if cause := context.Cause(ctx); errors.Is(cause, errFailFast) || errors.Is(cause, errMaxFailures) {
-			return AgentResult{Status: protocol.StatusSkipped, Error: "cancelled: " + cause.Error()}
+			return AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}
 		}
 		msg := err.Error()
 		if execCtx.Err() == context.DeadlineExceeded {

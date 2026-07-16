@@ -1,6 +1,8 @@
 package loader_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -94,5 +96,56 @@ func TestLoadSuite(t *testing.T) {
 				tc.check(t, suite)
 			}
 		})
+	}
+}
+
+// writeSuite drops a suite file into a temp dir and returns its path.
+func writeSuite(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "suite.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write suite: %v", err)
+	}
+	return path
+}
+
+func TestLoadSuite_InvalidBackoff(t *testing.T) {
+	path := writeSuite(t, `{"suite_id":"s","nodes":[{"test_id":"a","script":"a.py",
+	  "policy":{"criticality":"BLOCKER","retry_delay":"1s","backoff":"linear"}}]}`)
+	_, err := loader.LoadSuite(path)
+	if err == nil || !strings.Contains(err.Error(), "backoff") {
+		t.Fatalf("expected a backoff error, got: %v", err)
+	}
+}
+
+// A delay the runner cannot parse would be silently ignored, turning a
+// deliberate wait into no wait at all.
+func TestLoadSuite_InvalidRetryDelay(t *testing.T) {
+	path := writeSuite(t, `{"suite_id":"s","nodes":[{"test_id":"a","script":"a.py",
+	  "policy":{"criticality":"BLOCKER","retry_delay":"soon"}}]}`)
+	_, err := loader.LoadSuite(path)
+	if err == nil || !strings.Contains(err.Error(), "retry_delay") {
+		t.Fatalf("expected a retry_delay error, got: %v", err)
+	}
+}
+
+func TestLoadSuite_BackoffWithoutDelay(t *testing.T) {
+	path := writeSuite(t, `{"suite_id":"s","nodes":[{"test_id":"a","script":"a.py",
+	  "policy":{"criticality":"BLOCKER","backoff":"exponential"}}]}`)
+	_, err := loader.LoadSuite(path)
+	if err == nil || !strings.Contains(err.Error(), "retry_delay") {
+		t.Fatalf("expected an error about the missing delay, got: %v", err)
+	}
+}
+
+func TestLoadSuite_ValidRetryPolicy(t *testing.T) {
+	path := writeSuite(t, `{"suite_id":"s","nodes":[{"test_id":"a","script":"a.py",
+	  "policy":{"criticality":"BLOCKER","retries":2,"retry_delay":"500ms","backoff":"exponential"}}]}`)
+	suite, err := loader.LoadSuite(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suite.Nodes[0].Policy.RetryDelay != "500ms" || suite.Nodes[0].Policy.Backoff != "exponential" {
+		t.Fatalf("policy not parsed: %+v", suite.Nodes[0].Policy)
 	}
 }

@@ -23,6 +23,8 @@ const (
 	annPriority    = "playdag:priority"
 	annRetries     = "playdag:retries"
 	annTimeout     = "playdag:timeout"
+	annRetryDelay  = "playdag:retry_delay"
+	annBackoff     = "playdag:backoff"
 	annScope       = "playdag:scope"
 	annTags        = "playdag:tags"
 )
@@ -138,6 +140,8 @@ func (e *PlaywrightExtractor) nodeOf(spec listSpec, rootDir string) (Node, bool)
 				Retries:     atoi(ann[annRetries]),
 				Priority:    atoi(ann[annPriority]),
 				Timeout:     ann[annTimeout],
+				RetryDelay:  ann[annRetryDelay],
+				Backoff:     ann[annBackoff],
 			},
 			Resources: loader.ResourceConstraints{Tags: splitList(ann[annTags])},
 		},

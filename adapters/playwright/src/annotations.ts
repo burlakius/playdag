@@ -13,6 +13,8 @@ export const PRIORITY_ANNOTATION = 'playdag:priority';
 export const TAGS_ANNOTATION = 'playdag:tags';
 export const RETRIES_ANNOTATION = 'playdag:retries';
 export const TIMEOUT_ANNOTATION = 'playdag:timeout';
+export const RETRY_DELAY_ANNOTATION = 'playdag:retry_delay';
+export const BACKOFF_ANNOTATION = 'playdag:backoff';
 export const SCOPE_ANNOTATION = 'playdag:scope';
 
 /** Prefix of the annotation a test writes when it provides a value at runtime. */
@@ -22,6 +24,9 @@ export type Criticality = 'BLOCKER' | 'NON_CRITICAL';
 
 /** How long a value provided by the node stays in the context. */
 export type Scope = 'session' | 'suite' | 'global';
+
+/** How the delay between retries grows: constant, or doubling each attempt. */
+export type Backoff = 'fixed' | 'exponential';
 
 export interface PlaydagMeta {
   /** Node identifier, unique across the suite. */
@@ -38,6 +43,9 @@ export interface PlaydagMeta {
   retries?: number;
   /** Per-node timeout as a Go duration, for example '30s'. */
   timeout?: string;
+  /** Wait before a retry, as a Go duration; retrying instantly rarely helps. */
+  retryDelay?: string;
+  backoff?: Backoff;
   scope?: Scope;
   /** Resource tags, matched against the agent pool. */
   tags?: string[];
@@ -78,6 +86,12 @@ export function playdagMeta(meta: PlaydagMeta): { tag: string; annotation: Annot
   }
   if (meta.timeout) {
     annotation.push({ type: TIMEOUT_ANNOTATION, description: meta.timeout });
+  }
+  if (meta.retryDelay) {
+    annotation.push({ type: RETRY_DELAY_ANNOTATION, description: meta.retryDelay });
+  }
+  if (meta.backoff) {
+    annotation.push({ type: BACKOFF_ANNOTATION, description: meta.backoff });
   }
   if (meta.scope) {
     annotation.push({ type: SCOPE_ANNOTATION, description: meta.scope });

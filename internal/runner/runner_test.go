@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"playdag/internal/executor"
 	"playdag/internal/graph"
@@ -386,5 +387,60 @@ func TestRun_NoFailFastRunsEverything(t *testing.T) {
 	}
 	if got := r.Results()["other"].Status; got != protocol.StatusPassed {
 		t.Fatalf("other should have run, got %q", got)
+	}
+}
+
+func TestRetryDelay_FixedAndExponential(t *testing.T) {
+	fixed := loader.ExecutionPolicy{RetryDelay: "2s"}
+	for attempt := 1; attempt <= 3; attempt++ {
+		if got := retryDelay(fixed, attempt); got != 2*time.Second {
+			t.Errorf("fixed delay attempt %d: want 2s, got %s", attempt, got)
+		}
+	}
+
+	exp := loader.ExecutionPolicy{RetryDelay: "1s", Backoff: "exponential"}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+	for i, w := range want {
+		if got := retryDelay(exp, i+1); got != w {
+			t.Errorf("exponential delay attempt %d: want %s, got %s", i+1, w, got)
+		}
+	}
+}
+
+func TestRetryDelay_UnsetIsImmediate(t *testing.T) {
+	if got := retryDelay(loader.ExecutionPolicy{}, 1); got != 0 {
+		t.Fatalf("want no delay, got %s", got)
+	}
+}
+
+// The delay must not outlive the run: a suite that stopped should not sit
+// waiting to retry a node it has already abandoned.
+func TestRun_RetryDelayIsCancellable(t *testing.T) {
+	f := newFake()
+	f.failUntil["slow.retry"] = 99 // never passes, so it always waits to retry
+
+	n := node("slow.retry", nil, nil)
+	n.Policy.Retries = 5
+	n.Policy.RetryDelay = "30s"
+
+	dag, err := graph.NewDAG([]loader.TestNode{n})
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{MaxConcurrency: 1, Executor: f})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Let the first attempt fail and the wait begin.
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	if err := r.Run(ctx); err == nil {
+		t.Fatal("Run should report the cancellation")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the retry delay ignored cancellation: took %s", elapsed)
 	}
 }

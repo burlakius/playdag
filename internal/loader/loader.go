@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 )
 
 // Suite represents the top-level test suite definition.
@@ -37,6 +38,8 @@ type ExecutionPolicy struct {
 	Retries     int    `json:"retries"`
 	Priority    int    `json:"priority"`
 	Timeout     string `json:"timeout"`
+	RetryDelay  string `json:"retry_delay,omitempty"` // wait before a retry, e.g. "2s"
+	Backoff     string `json:"backoff,omitempty"`     // "" or "fixed" (constant delay), or "exponential"
 }
 
 // ResourceConstraints restricts which runner tags may execute the node.
@@ -87,11 +90,34 @@ func validate(s *Suite) error {
 		default:
 			return fmt.Errorf("loader: node %q: invalid criticality %q (must be BLOCKER or NON_CRITICAL)", n.TestID, n.Policy.Criticality)
 		}
+		if err := validatePolicy(n); err != nil {
+			return err
+		}
 		if _, dup := seen[n.TestID]; dup {
 			return fmt.Errorf("loader: duplicate test_id %q", n.TestID)
 		}
 		seen[n.TestID] = struct{}{}
 	}
 
+	return nil
+}
+
+// validatePolicy rejects a retry policy the runner could only misread. A bad
+// duration here would otherwise be silently ignored and the node would retry
+// with no delay at all.
+func validatePolicy(n TestNode) error {
+	switch n.Policy.Backoff {
+	case "", "fixed", "exponential":
+	default:
+		return fmt.Errorf("loader: node %q: invalid backoff %q (must be fixed or exponential)", n.TestID, n.Policy.Backoff)
+	}
+	if n.Policy.RetryDelay != "" {
+		if _, err := time.ParseDuration(n.Policy.RetryDelay); err != nil {
+			return fmt.Errorf("loader: node %q: invalid retry_delay %q: %w", n.TestID, n.Policy.RetryDelay, err)
+		}
+	}
+	if n.Policy.Backoff != "" && n.Policy.RetryDelay == "" {
+		return fmt.Errorf("loader: node %q: backoff %q needs a retry_delay to scale", n.TestID, n.Policy.Backoff)
+	}
 	return nil
 }

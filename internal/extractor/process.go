@@ -130,6 +130,8 @@ func (e *ProcessExtractor) nodeOf(path string) (Node, bool, error) {
 				Retries:     atoi(meta["retries"]),
 				Priority:    atoi(meta["priority"]),
 				Timeout:     strings.TrimSpace(meta["timeout"]),
+				RetryDelay:  strings.TrimSpace(meta["retry_delay"]),
+				Backoff:     strings.TrimSpace(meta["backoff"]),
 			},
 			Resources: loader.ResourceConstraints{Tags: splitList(meta["tags"])},
 		},
