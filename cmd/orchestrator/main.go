@@ -166,6 +166,7 @@ func run(args []string) {
 	failfastFlag := fs.Bool("fail-fast",        false,                        "stop the run as soon as a BLOCKER node fails")
 	maxfailFlag  := fs.Int("max-failures",      0,                            "stop after this many failed nodes; 0 = no limit")
 	globalFlag   := fs.String("global-context", "",                           "file where global-scoped values persist between runs; empty = off")
+	htmlFlag     := fs.String("html",           "",                           "path for a single-file HTML report with a timeline; empty = off")
 	fs.Parse(args)
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -181,7 +182,10 @@ func run(args []string) {
 	}
 
 	// Ensure parent directories for output files exist.
-	for _, p := range []string{*snapshotFlag, *reportFlag} {
+	for _, p := range []string{*snapshotFlag, *reportFlag, *htmlFlag} {
+		if p == "" {
+			continue
+		}
 		if dir := filepath.Dir(p); dir != "." {
 			if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 				fmt.Fprintf(os.Stderr, "warning: mkdir %s: %v\n", dir, mkErr)
@@ -254,6 +258,12 @@ func run(args []string) {
 
 	if err := report.SaveJSON(rep, *reportFlag); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: save report: %v\n", err)
+	}
+
+	if *htmlFlag != "" {
+		if err := report.SaveHTML(rep, *htmlFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: save html report: %v\n", err)
+		}
 	}
 
 	if runErr != nil {
