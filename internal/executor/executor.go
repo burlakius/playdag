@@ -35,7 +35,7 @@ type Executor interface {
 }
 
 // Names lists the executors New accepts, for CLI help and error messages.
-var Names = []string{"process"}
+var Names = []string{"process", "playwright"}
 
 // New builds the executor selected by name. baseDir resolves script paths and
 // baseURL points at the system under test.
@@ -43,6 +43,8 @@ func New(name, baseDir, baseURL string) (Executor, error) {
 	switch name {
 	case "process":
 		return NewProcess(baseDir, baseURL), nil
+	case "playwright":
+		return NewPlaywright(baseDir, baseURL), nil
 	default:
 		return nil, fmt.Errorf("executor: unknown executor %q (want one of %v)", name, Names)
 	}

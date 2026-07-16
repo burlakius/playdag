@@ -28,7 +28,7 @@ func main() {
 	timeoutFlag  := flag.Int("timeout",     300,                           "global timeout in seconds")
 	jsonFlag     := flag.Bool("json",       false,                         "emit machine-readable JSON event log")
 	agentsFlag   := flag.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
-	executorFlag := flag.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent)")
+	executorFlag := flag.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent) or playwright")
 	flag.Parse()
 
 	suite, err := loader.LoadSuite(*suiteFlag)
