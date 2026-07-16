@@ -7,6 +7,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -35,7 +36,17 @@ type RunOptions struct {
 	JSONLog        bool               // emit one JSON object per log event instead of text
 	Executor       executor.Executor  // runs a single node; required
 	Agents         []*scheduler.Agent // explicit agent pool; empty → MaxConcurrency universal agents
+	FailFast       bool               // stop the run as soon as a BLOCKER node fails
+	MaxFailures    int                // stop after this many failures; 0 → no limit
 }
+
+// errFailFast and errMaxFailures are the reasons a run stops itself. They are
+// attached as the cancellation cause, which is how a node being torn down can
+// tell "the run gave up" from "the global timeout fired" and report honestly.
+var (
+	errFailFast    = errors.New("fail-fast: a blocking node failed")
+	errMaxFailures = errors.New("too many failures")
+)
 
 // Runner drives the DAG to completion, launching each node as a subprocess.
 type Runner struct {
@@ -97,38 +108,47 @@ type nodeCompletion struct {
 	result AgentResult
 }
 
-// Run drives the orchestration loop until every node reaches a terminal state
-// or ctx is cancelled. Ready nodes are taken from the scheduler, so at a given
-// concurrency the execution order is reproducible. It is safe to call once.
+// Run drives the orchestration loop until every node reaches a terminal state,
+// the run stops itself, or ctx is cancelled. Ready nodes are taken from the
+// scheduler, so at a given concurrency the execution order is reproducible. It
+// is safe to call once.
 func (r *Runner) Run(ctx context.Context) error {
+	// Nodes run under runCtx, not ctx: cancelling it tears down everything in
+	// flight without touching the caller's context.
+	runCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
 	// Buffer covers every agent so a finishing goroutine never blocks on send,
 	// even while the main loop sits in wg.Wait during cancellation.
 	done := make(chan nodeCompletion, r.agents)
 	inFlight := 0
+	stopping := false
 
 	for _, n := range r.dag.ReadyNodes() {
 		r.sched.Push(n)
 	}
 
 	for {
-		for {
-			node, agent, ok := r.sched.Next()
-			if !ok {
-				break
+		if !stopping {
+			for {
+				node, agent, ok := r.sched.Next()
+				if !ok {
+					break
+				}
+				r.dag.MarkRunning(node.TestID)
+				inFlight++
+				r.wg.Add(1)
+				go func() {
+					defer r.wg.Done()
+					result := r.runNode(runCtx, node)
+					done <- nodeCompletion{node: node, agent: agent, result: result}
+				}()
 			}
-			r.dag.MarkRunning(node.TestID)
-			inFlight++
-			r.wg.Add(1)
-			go func() {
-				defer r.wg.Done()
-				result := r.runNode(ctx, node)
-				done <- nodeCompletion{node: node, agent: agent, result: result}
-			}()
 		}
 
 		if inFlight == 0 {
-			if r.sched.Pending() == 0 {
-				return nil
+			if stopping || r.sched.Pending() == 0 {
+				break
 			}
 			return fmt.Errorf("runner: %d node(s) cannot be scheduled on any agent (tags: %v)",
 				r.sched.Pending(), r.sched.PendingTags())
@@ -141,23 +161,89 @@ func (r *Runner) Run(ctx context.Context) error {
 		case c := <-done:
 			inFlight--
 			r.sched.Release(c.agent)
-			r.mu.Lock()
-			r.results[c.node.TestID] = c.result
-			r.mu.Unlock()
+			r.complete(c)
 
-			if c.result.Status == protocol.StatusPassed {
-				for _, n := range r.dag.MarkPassed(c.node.TestID) {
-					r.sched.Push(n)
-				}
-			} else {
-				skipped := r.dag.MarkFailed(c.node.TestID)
-				for _, sid := range skipped {
-					r.log("SKIP", sid, "blocked by: "+c.node.TestID)
-					r.mu.Lock()
-					r.results[sid] = AgentResult{Status: protocol.StatusSkipped, Error: "blocked by: " + c.node.TestID}
-					r.mu.Unlock()
-				}
+			if reason := r.stopReason(c); reason != nil && !stopping {
+				stopping = true
+				r.log("STOP", c.node.TestID, reason.Error()+": cancelling nodes in flight")
+				cancel(reason)
 			}
+		}
+	}
+
+	if stopping {
+		r.cancelPending()
+	}
+	return nil
+}
+
+// stopReason reports why the run should stop after this completion, or nil to
+// carry on. A failed NON_CRITICAL node never triggers fail-fast: nothing that
+// matters depends on it, which is what the label means.
+func (r *Runner) stopReason(c nodeCompletion) error {
+	if c.result.Status != protocol.StatusFailed {
+		return nil
+	}
+	if r.opts.FailFast && c.node.Policy.Criticality == "BLOCKER" {
+		return errFailFast
+	}
+	if r.opts.MaxFailures > 0 && r.failures() >= r.opts.MaxFailures {
+		return fmt.Errorf("%w: %d of %d allowed", errMaxFailures, r.failures(), r.opts.MaxFailures)
+	}
+	return nil
+}
+
+// failures counts the nodes that have failed so far.
+func (r *Runner) failures() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, res := range r.results {
+		if res.Status == protocol.StatusFailed {
+			n++
+		}
+	}
+	return n
+}
+
+// complete records one node's outcome and releases whatever it unblocked.
+func (r *Runner) complete(c nodeCompletion) {
+	r.mu.Lock()
+	r.results[c.node.TestID] = c.result
+	r.mu.Unlock()
+
+	if c.result.Status == protocol.StatusPassed {
+		for _, n := range r.dag.MarkPassed(c.node.TestID) {
+			r.sched.Push(n)
+		}
+		return
+	}
+	if c.result.Status == protocol.StatusSkipped {
+		// The node was cancelled rather than run; its dependants are closed out
+		// by cancelPending, which knows the reason for the whole run.
+		return
+	}
+
+	for _, sid := range r.dag.MarkFailed(c.node.TestID) {
+		r.log("SKIP", sid, "blocked by: "+c.node.TestID)
+		r.mu.Lock()
+		r.results[sid] = AgentResult{Status: protocol.StatusSkipped, Error: "blocked by: " + c.node.TestID}
+		r.mu.Unlock()
+	}
+}
+
+// cancelPending closes out the nodes that never started, so a run that stopped
+// early still reports every node in the suite.
+func (r *Runner) cancelPending() {
+	for _, id := range r.dag.CancelPending() {
+		r.mu.Lock()
+		_, reported := r.results[id]
+		if !reported {
+			r.results[id] = AgentResult{Status: protocol.StatusSkipped, Error: "not started: the run stopped early"}
+		}
+		r.mu.Unlock()
+		if !reported {
+			r.log("SKIP", id, "not started: the run stopped early")
 		}
 	}
 }
@@ -184,6 +270,13 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode) AgentResult
 			for k, v := range result.Provides {
 				r.store.Set(k, v, node.TestID, node.Contract.Scope)
 			}
+			return result
+		}
+		// A cancelled node was not tried, so retrying it would only restart work
+		// the run has already decided to abandon.
+		if result.Status == protocol.StatusSkipped {
+			result.Duration = time.Since(nodeStart)
+			r.log("SKIP", node.TestID, result.Error)
 			return result
 		}
 	}
@@ -214,6 +307,11 @@ func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, attempt in
 
 	res, err := r.opts.Executor.Run(execCtx, node, executor.Input{Context: ctxData, Attempt: attempt})
 	if err != nil {
+		// The run tearing this node down is not the node failing: report what
+		// actually happened, or the report would blame a test for being killed.
+		if cause := context.Cause(ctx); errors.Is(cause, errFailFast) || errors.Is(cause, errMaxFailures) {
+			return AgentResult{Status: protocol.StatusSkipped, Error: "cancelled: " + cause.Error()}
+		}
 		msg := err.Error()
 		if execCtx.Err() == context.DeadlineExceeded {
 			msg = "timeout exceeded"

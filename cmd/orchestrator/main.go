@@ -102,6 +102,8 @@ func run(args []string) {
 	jsonFlag     := fs.Bool("json",       false,                         "emit machine-readable JSON event log")
 	agentsFlag   := fs.String("agents",   "",                            "agent pool as JSON file or inline; default: universal agents")
 	executorFlag := fs.String("executor", "process",                     "how nodes are run: process (any protocol-speaking agent) or playwright")
+	failfastFlag := fs.Bool("fail-fast",  false,                         "stop the run as soon as a BLOCKER node fails")
+	maxfailFlag  := fs.Int("max-failures", 0,                            "stop after this many failed nodes; 0 = no limit")
 	fs.Parse(args)
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -143,6 +145,8 @@ func run(args []string) {
 		JSONLog:        *jsonFlag,
 		Executor:       exec,
 		Agents:         agents,
+		FailFast:       *failfastFlag,
+		MaxFailures:    *maxfailFlag,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)

@@ -219,3 +219,172 @@ func TestRun_AllNodesReported(t *testing.T) {
 		t.Fatalf("want %d results, got %d", len(nodes), len(r.Results()))
 	}
 }
+
+// blockingExecutor lets a test control exactly when a node finishes, so the
+// fail-fast path can be observed while other nodes are genuinely in flight.
+type blockingExecutor struct {
+	started chan string
+	release chan struct{}
+	mu      sync.Mutex
+	results map[string]executor.Result
+	ctxErr  map[string]error // test_id → the context error the node saw
+}
+
+func newBlocking() *blockingExecutor {
+	return &blockingExecutor{
+		started: make(chan string, 16),
+		release: make(chan struct{}),
+		results: make(map[string]executor.Result),
+		ctxErr:  make(map[string]error),
+	}
+}
+
+func (b *blockingExecutor) Run(ctx context.Context, node *loader.TestNode, in executor.Input) (executor.Result, error) {
+	b.mu.Lock()
+	res, canned := b.results[node.TestID]
+	b.mu.Unlock()
+
+	b.started <- node.TestID
+	if canned {
+		return res, nil
+	}
+
+	// No canned result: block until the test releases us or the run cancels.
+	select {
+	case <-b.release:
+		return executor.Result{Status: protocol.StatusPassed}, nil
+	case <-ctx.Done():
+		b.mu.Lock()
+		b.ctxErr[node.TestID] = ctx.Err()
+		b.mu.Unlock()
+		return executor.Result{}, ctx.Err()
+	}
+}
+
+func (b *blockingExecutor) sawCancel(testID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ctxErr[testID] != nil
+}
+
+// The point of fail-fast: a node already running must be torn down, not left to
+// finish work whose result the run has decided it does not want.
+func TestRun_FailFastCancelsNodesInFlight(t *testing.T) {
+	b := newBlocking()
+	b.results["boom"] = executor.Result{Status: protocol.StatusFailed, Error: "blocker failed"}
+
+	nodes := []loader.TestNode{
+		node("boom", nil, nil),
+		node("slow", nil, nil), // independent: nothing links it to boom
+	}
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{
+		MaxConcurrency: 2,
+		Executor:       b,
+		FailFast:       true,
+	})
+
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !b.sawCancel("slow") {
+		t.Fatal("the in-flight node was never cancelled")
+	}
+	res := r.Results()["slow"]
+	if res.Status != protocol.StatusSkipped {
+		t.Fatalf("a cancelled node must not be reported as failed: %+v", res)
+	}
+	if !strings.Contains(res.Error, "fail-fast") {
+		t.Errorf("the reason should say why: %q", res.Error)
+	}
+	if r.Results()["boom"].Status != protocol.StatusFailed {
+		t.Errorf("boom should be FAILED: %+v", r.Results()["boom"])
+	}
+}
+
+// A NON_CRITICAL failure is expected to be survivable; stopping on it would
+// make the label meaningless.
+func TestRun_FailFastIgnoresNonCriticalFailure(t *testing.T) {
+	f := newFake()
+	f.results["flaky"] = executor.Result{Status: protocol.StatusFailed, Error: "meh"}
+
+	nonCritical := node("flaky", nil, nil)
+	nonCritical.Policy.Criticality = "NON_CRITICAL"
+	nodes := []loader.TestNode{nonCritical, node("other", nil, nil)}
+
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{
+		MaxConcurrency: 1,
+		Executor:       f,
+		FailFast:       true,
+	})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := r.Results()["other"].Status; got != protocol.StatusPassed {
+		t.Fatalf("the run should have carried on, got %q for other", got)
+	}
+}
+
+func TestRun_MaxFailuresStopsTheRun(t *testing.T) {
+	f := newFake()
+	for _, id := range []string{"a", "b", "c", "d"} {
+		f.results[id] = executor.Result{Status: protocol.StatusFailed, Error: "no"}
+	}
+	nodes := []loader.TestNode{node("a", nil, nil), node("b", nil, nil), node("c", nil, nil), node("d", nil, nil)}
+
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{
+		MaxConcurrency: 1, // one at a time, so the threshold is exact
+		Executor:       f,
+		MaxFailures:    2,
+	})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	results := r.Results()
+	if len(results) != 4 {
+		t.Fatalf("every node must still be reported, got %d", len(results))
+	}
+	failed := 0
+	for _, res := range results {
+		if res.Status == protocol.StatusFailed {
+			failed++
+		}
+	}
+	if failed != 2 {
+		t.Fatalf("the run should have stopped at 2 failures, got %d", failed)
+	}
+}
+
+// Without fail-fast the whole suite still runs, which is what makes fail-fast a
+// choice rather than the only behaviour.
+func TestRun_NoFailFastRunsEverything(t *testing.T) {
+	f := newFake()
+	f.results["boom"] = executor.Result{Status: protocol.StatusFailed, Error: "blocker failed"}
+	nodes := []loader.TestNode{node("boom", nil, nil), node("other", nil, nil)}
+
+	dag, err := graph.NewDAG(nodes)
+	if err != nil {
+		t.Fatalf("NewDAG: %v", err)
+	}
+	r := NewRunner(dag, store.NewContextStore(""), RunOptions{MaxConcurrency: 1, Executor: f})
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := r.Results()["other"].Status; got != protocol.StatusPassed {
+		t.Fatalf("other should have run, got %q", got)
+	}
+}

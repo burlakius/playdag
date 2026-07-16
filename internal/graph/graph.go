@@ -191,6 +191,25 @@ func (d *DAG) MarkFailed(testID string) []string {
 	return skipped
 }
 
+// CancelPending marks every node that has not started as StatusSkipped and
+// returns their ids in suite order. It is what closes out a run that stops
+// early: nodes still in flight report their own outcome, but the ones that
+// never started would otherwise be left with no result at all.
+func (d *DAG) CancelPending() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	var cancelled []string
+	for id, s := range d.status {
+		if s == StatusPending || s == StatusReady {
+			d.status[id] = StatusSkipped
+			cancelled = append(cancelled, id)
+		}
+	}
+	sort.Strings(cancelled)
+	return cancelled
+}
+
 // AllDone reports whether every node has reached a terminal state.
 func (d *DAG) AllDone() bool {
 	d.mu.RLock()
