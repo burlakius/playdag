@@ -189,3 +189,30 @@ func TestNew_Unknown(t *testing.T) {
 		t.Fatal("expected an error for an unknown extractor")
 	}
 }
+
+// A transposition is the typo people actually make.
+func TestValidate_UnknownKeySuggestsOnTypo(t *testing.T) {
+	nodes := []Node{
+		node("a", "a.py", 3, nil, []string{"session.token"}),
+		node("b", "b.py", 5, []string{"session.tokne"}, nil),
+	}
+	err := Validate(nodes)
+	if err == nil || !strings.Contains(err.Error(), `did you mean "session.token"`) {
+		t.Fatalf("expected a suggestion for a transposed key, got: %v", err)
+	}
+}
+
+// An unrelated key is a missing node, not a misspelling; guessing would mislead.
+func TestValidate_UnknownKeyWithoutSuggestion(t *testing.T) {
+	nodes := []Node{
+		node("a", "a.py", 3, nil, []string{"session.token"}),
+		node("b", "b.py", 5, []string{"invoice.pdf"}, nil),
+	}
+	err := Validate(nodes)
+	if err == nil {
+		t.Fatal("expected an unknown-key error")
+	}
+	if strings.Contains(err.Error(), "did you mean") {
+		t.Fatalf("should not guess for an unrelated key, got: %v", err)
+	}
+}

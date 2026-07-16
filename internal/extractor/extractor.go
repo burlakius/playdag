@@ -124,17 +124,48 @@ func checkRequires(nodes []Node, providers map[string]Node) error {
 // didYouMean points at the closest known key, since an unknown key is usually a
 // typo in one of the two places the key is spelled.
 func didYouMean(key string, providers map[string]Node) string {
-	var candidates []string
-	for known := range providers {
-		if strings.EqualFold(known, key) || strings.Contains(known, key) || strings.Contains(key, known) {
-			candidates = append(candidates, known)
+	known := make([]string, 0, len(providers))
+	for k := range providers {
+		known = append(known, k)
+	}
+	sort.Strings(known)
+
+	best, bestDist := "", maxTypoDistance+1
+	for _, k := range known {
+		if d := editDistance(strings.ToLower(k), strings.ToLower(key)); d < bestDist {
+			best, bestDist = k, d
 		}
 	}
-	if len(candidates) == 0 {
+	if best == "" {
 		return ""
 	}
-	sort.Strings(candidates)
-	return fmt.Sprintf(" (did you mean %q?)", candidates[0])
+	return fmt.Sprintf(" (did you mean %q?)", best)
+}
+
+// maxTypoDistance is how far a key may be from a known one and still be treated
+// as a misspelling of it rather than a different key entirely.
+const maxTypoDistance = 3
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 // checkGraph runs the real graph builder, so extraction rejects exactly what
