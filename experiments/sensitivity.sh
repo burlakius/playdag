@@ -86,7 +86,11 @@ for delay in $DELAYS; do
 
   for i in $(seq 1 "$RUNS"); do
     start_server "$delay"
-    time_it npx playwright test tests/baseline.spec.ts --workers=4 --config="$PROJECT/playwright.config.ts"
+    # --fully-parallel for the same reason as in run.sh: without it Playwright
+    # runs the file's tests in one worker and the baseline is not the parallel
+    # one it claims to be.
+    time_it npx playwright test tests/baseline.spec.ts --workers=4 --fully-parallel \
+      --config="$PROJECT/playwright.config.ts"
     stop_server
     record "baseline-${delay}" "$i" "$LAST_SECONDS" "$LAST_EXIT" "$delay"
   done
