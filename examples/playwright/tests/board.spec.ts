@@ -42,7 +42,9 @@ test('create a card', playdagMeta({
   await page.locator('#title').fill('Written by playdag');
   await page.getByRole('button', { name: 'New card' }).click();
 
-  const card = page.getByTestId('card').first();
+  // The card just created is the last one: .first() would pick whatever the
+  // board already had and quietly assume nobody else has ever used it.
+  const card = page.getByTestId('card').last();
   await expect(card).toContainText('Written by playdag');
   playdag.provide('card.id', (await card.getAttribute('data-card-id'))!);
 });
