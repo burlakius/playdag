@@ -1,8 +1,26 @@
 # playdag
 
-**playdag** is a minimal DAG orchestrator for end-to-end test suites. It reads a JSON suite definition, resolves the data dependencies between test nodes, runs them in the correct order with controlled parallelism, and produces both a human-readable execution report and a machine-readable JSON snapshot — letting you run complex, stateful test sequences as reliably and quickly as your infrastructure allows.
+**playdag** is a DAG orchestrator for end-to-end test suites. Tests declare the data they need and produce; playdag derives the order from those declarations, runs the suite with controlled parallelism, and hands each test the values the earlier ones produced — so a session established once is reused rather than established again.
 
-Values flow between tests through a shared context, so a session established by one test is reused by the tests that depend on it instead of being established again.
+## When this pays off
+
+Sharing a session removes work: one sign-in instead of one per test. Running
+each node in its own framework process adds work: about 1.6 s of startup per
+node for Playwright. Which wins depends on your suite, and the
+[experiments](experiments/README.md) measure where the line is:
+
+- **Worth it** when the repeated setup is expensive — measured break-even is a
+  sign-in costing **~3 s** — or when a broken blocker should stop the run
+  (**−45%** of CI time in the fail-fast experiment), or when the suite's shape
+  gives the scheduler something to overlap (**1.55×** over a single agent).
+- **Not worth it** on suites of many cheap tests against a fast application. On
+  the demo suite, whose sign-in costs milliseconds, plain `npx playwright test`
+  is **2.4× faster**. The measurement is in `experiments/results.md`, and the
+  reason — and what would change it — is in
+  [ADR 3](docs/adr/0003-one-process-per-node.md).
+
+That trade is the honest summary: this removes repeated work, and charges a
+process per node for doing so.
 
 Each value declares a **scope**, which decides how long it lives and who may see it:
 
@@ -208,8 +226,12 @@ go test -tags integration ./internal/runner/...
 # Adapter (requires npm install at the repository root)
 npm run build --workspace @playdag/playwright
 
-# Vet
+# Vet and lint
 go vet ./...
+golangci-lint run ./...
+
+# Coverage of the core packages
+go test -cover ./internal/graph/ ./internal/scheduler/ ./internal/store/
 ```
 
 ## Suite JSON format
