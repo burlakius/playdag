@@ -326,8 +326,10 @@ def plot(samples: dict[str, Sample], by_workers: dict[int, Sample], serial: floa
     spread = [c for c in ["e1", "e1p", "e2", "e3"] if c in samples]
     if spread:
         fig, ax = plt.subplots(figsize=(8, 4.5))
+        # tick_labels, not labels: matplotlib 3.9 renamed it and removed the old
+        # spelling in 3.11.
         ax.boxplot([samples[c].seconds for c in spread],
-                   labels=[CONFIG_LABELS[c] for c in spread], showmeans=True)
+                   tick_labels=[CONFIG_LABELS[c] for c in spread], showmeans=True)
         ax.set_ylabel("wall clock, seconds")
         ax.set_title("Spread across runs (warm-up dropped)")
         ax.spines[["top", "right"]].set_visible(False)
