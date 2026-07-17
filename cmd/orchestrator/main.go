@@ -3,6 +3,8 @@
 //	orchestrator [flags]              run a suite
 //	orchestrator extract [flags]      generate a suite from the tests
 //	orchestrator graph [flags]        render the suite's dependency graph
+//	orchestrator validate [flags]     check a suite without running it
+//	orchestrator version              print the version
 package main
 
 import (
@@ -19,10 +21,24 @@ import (
 	"playdag/internal/extractor"
 	"playdag/internal/graph"
 	"playdag/internal/loader"
+	"playdag/internal/protocol"
 	"playdag/internal/report"
 	"playdag/internal/runner"
 	"playdag/internal/scheduler"
 	"playdag/internal/store"
+)
+
+// version is stamped at build time:
+//
+//	go build -ldflags "-X main.version=1.2.3" ./cmd/orchestrator/
+var version = "dev"
+
+// Exit codes. Telling a failing suite from a broken run is the difference
+// between a red build someone investigates and a red build someone reruns.
+const (
+	exitOK      = 0 // every node passed
+	exitFailed  = 1 // the suite ran, and something in it failed
+	exitProblem = 2 // the suite could not be run at all
 )
 
 func main() {
@@ -32,11 +48,11 @@ func main() {
 		if !ok {
 			fmt.Fprintf(os.Stderr, "error: unknown command %q (want one of %v, or flags to run a suite)\n",
 				args[0], commandNames())
-			os.Exit(1)
+			os.Exit(exitProblem)
 		}
 		if err := cmd(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			os.Exit(exitProblem)
 		}
 		return
 	}
@@ -45,8 +61,53 @@ func main() {
 
 // commands are the subcommands; anything else is flags for a run.
 var commands = map[string]func([]string) error{
-	"extract": extract,
-	"graph":   graphCmd,
+	"extract":  extract,
+	"graph":    graphCmd,
+	"validate": validateCmd,
+	"version":  versionCmd,
+}
+
+func versionCmd([]string) error {
+	fmt.Printf("orchestrator %s (agent protocol %s)\n", version, protocol.Version)
+	return nil
+}
+
+// validateCmd checks a suite without running it: the same checks the run does,
+// paid for in a second rather than in a CI job that stalls halfway.
+func validateCmd(args []string) error {
+	fs := flag.NewFlagSet("validate", flag.ExitOnError)
+	suiteFlag   := fs.String("suite",   "tests/suite.json", "path to suite.json")
+	basedirFlag := fs.String("basedir", ".",                "directory the scripts are relative to")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	suite, err := loader.LoadSuite(*suiteFlag)
+	if err != nil {
+		return err
+	}
+	dag, err := graph.NewDAG(suite.Nodes)
+	if err != nil {
+		return err
+	}
+
+	// A contract can be perfect while the script it names does not exist. The
+	// run would only find that out when it reached the node.
+	var missing []string
+	for _, n := range suite.Nodes {
+		path := filepath.Join(*basedirFlag, n.Script)
+		if _, statErr := os.Stat(path); statErr != nil {
+			missing = append(missing, fmt.Sprintf("%s: %s", n.TestID, path))
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("script not found for %d node(s):\n  %s", len(missing), strings.Join(missing, "\n  "))
+	}
+
+	ready := len(dag.ReadyNodes())
+	fmt.Printf("%s: %d node(s), %d with nothing to wait for, no cycles, every key provided\n",
+		suite.SuiteID, len(suite.Nodes), ready)
+	return nil
 }
 
 func commandNames() []string {
@@ -173,13 +234,13 @@ func run(args []string) {
 	suite, err := loader.LoadSuite(*suiteFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load suite: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitProblem)
 	}
 
 	dag, err := graph.NewDAG(suite.Nodes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: build graph: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitProblem)
 	}
 
 	// Ensure parent directories for output files exist.
@@ -197,20 +258,20 @@ func run(args []string) {
 	agents, err := scheduler.ParseAgents(*agentsFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitProblem)
 	}
 
 	exec, err := executor.New(*executorFlag, *basedirFlag, *baseurlFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		os.Exit(exitProblem)
 	}
 
 	s := store.NewContextStore(*snapshotFlag)
 	if *globalFlag != "" {
 		if err := s.UseGlobalFile(*globalFlag); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+			os.Exit(exitProblem)
 		}
 	}
 	r := runner.NewRunner(dag, s, runner.RunOptions{
@@ -273,12 +334,15 @@ func run(args []string) {
 		}
 	}
 
+	// A run that could not be performed is not a run that found bugs: the
+	// timeout, the unschedulable node and the broken agent pool are the
+	// orchestrator's problem, not the suite's.
 	if runErr != nil {
 		fmt.Fprintf(os.Stderr, "run error: %v\n", runErr)
-		os.Exit(1)
+		os.Exit(exitProblem)
 	}
 
 	if dag.Summary()["failed"] > 0 {
-		os.Exit(1)
+		os.Exit(exitFailed)
 	}
 }

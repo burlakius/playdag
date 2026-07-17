@@ -112,6 +112,8 @@ Playwright adapter needs Node 18+ (`npm install`).
 | `orchestrator [flags]` | Run a suite |
 | `orchestrator extract [flags]` | Generate `suite.json` from the tests |
 | `orchestrator graph [flags]` | Render the dependency graph as Mermaid or DOT |
+| `orchestrator validate [flags]` | Check a suite without running it |
+| `orchestrator version` | Print the version and the protocol it speaks |
 
 `extract` reads the metadata where it is declared — Playwright annotations, or a
 header convention in agent scripts — validates the contracts, and writes the
@@ -142,7 +144,15 @@ is not meant to be edited.
 `extract` takes `-extractor` (`process` or `playwright`), `-basedir`, `-o` (output path, `-` for stdout), `-suite-id` and `-timeout`.
 `graph` takes `-suite`, `-format` (`mermaid` or `dot`) and `-o`.
 
-Exit code is `0` if all tests pass, `1` if any fail or the global timeout fires.
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every node passed |
+| `1` | The suite ran and something in it failed |
+| `2` | The suite could not be run: bad flags, unreadable suite, a node no agent can take, the global timeout |
+
+`1` is a suite to investigate; `2` is the orchestrator or its configuration to fix. CI can tell them apart.
 
 ## Output example
 
