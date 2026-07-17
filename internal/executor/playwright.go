@@ -59,8 +59,12 @@ func (e *PlaywrightExecutor) Run(ctx context.Context, node *loader.TestNode, in 
 		return Result{}, fmt.Errorf("playwright: create result file: %w", err)
 	}
 	resultPath := resultFile.Name()
-	resultFile.Close()
-	defer os.Remove(resultPath)
+	if err := resultFile.Close(); err != nil {
+		return Result{}, fmt.Errorf("playwright: create result file: %w", err)
+	}
+	// The reporter writes this file; we only needed its name. Removing it is
+	// best effort — the run has already produced its result by then.
+	defer func() { _ = os.Remove(resultPath) }()
 
 	cmd := exec.CommandContext(ctx, "npx", playwrightArgs(node)...)
 	killGroup(cmd)

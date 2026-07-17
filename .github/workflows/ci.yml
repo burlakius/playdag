@@ -1,0 +1,108 @@
+# Checks that must pass on a mirror of this repository. The experiments live in
+# .gitlab-ci.yml, on the runner that has the application to measure against;
+# this pipeline only answers "is the code sound", which needs nothing private.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # main.go keeps its flag block aligned by hand, which gofmt undoes; every
+      # other file must be clean.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l . | grep -v '^cmd/orchestrator/main.go$' || true)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: vet
+        run: go vet ./...
+
+      - name: lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      # The core is a scheduler; the race detector is the check that matters.
+      - name: test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: integration test
+        run: go test -tags integration ./internal/runner/
+
+      # The packages holding the graph, the queue and the shared store are the
+      # ones a defect would be silent in.
+      - name: coverage of the core packages
+        run: |
+          go tool cover -func=coverage.out | tail -1
+          fail=0
+          for pkg in graph scheduler store; do
+            # Statement coverage, as go itself reports it. Averaging the
+            # per-function figures would weight a one-line helper the same as
+            # the scheduler loop and quietly report a number nobody measured.
+            pct=$(go test -cover ./internal/$pkg/ | grep -o 'coverage: [0-9.]*' | awk '{print $2}')
+            printf "%-10s %s%%\n" "$pkg" "$pct"
+            awk -v p="$pct" 'BEGIN { exit (p >= 80) ? 0 : 1 }' || { echo "  below 80%"; fail=1; }
+          done
+          exit $fail
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  adapter:
+    name: npm adapter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - name: typecheck and build
+        run: npm run build --workspace @playdag/playwright
+
+  example:
+    name: Examples run end to end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: go build -o orchestrator ./cmd/orchestrator/
+
+      # The suite is generated from the tests, so this also checks the extractor
+      # against the real thing rather than a fixture.
+      - name: generic agents
+        run: |
+          node examples/demo-app/server.js 8000 &
+          sleep 1
+          ./orchestrator extract -extractor process -basedir examples/process -o examples/process/suite.json
+          ./orchestrator validate -suite examples/process/suite.json -basedir examples/process
+          ./orchestrator -executor process -suite examples/process/suite.json \
+            -basedir examples/process -baseurl http://localhost:8000
+
+      - name: playwright
+        run: |
+          ./orchestrator extract -extractor playwright -basedir examples/playwright -o examples/playwright/suite.json
+          ./orchestrator -executor playwright -suite examples/playwright/suite.json \
+            -basedir examples/playwright -baseurl http://localhost:8000

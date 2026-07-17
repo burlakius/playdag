@@ -19,10 +19,16 @@ func SaveHTML(r *Report, path string) error {
 	if err != nil {
 		return fmt.Errorf("report: create html: %w", err)
 	}
-	defer f.Close()
 
 	if err := htmlTemplate.Execute(f, buildView(r)); err != nil {
+		_ = f.Close() // the render error is the one worth reporting
 		return fmt.Errorf("report: render html: %w", err)
+	}
+	// Checked, not deferred and dropped: a close that fails is a report that
+	// did not entirely reach the disk, and saying nothing would leave a
+	// truncated file looking like a written one.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("report: close html: %w", err)
 	}
 	return nil
 }

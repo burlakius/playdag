@@ -229,7 +229,7 @@ func run(args []string) {
 	globalFlag   := fs.String("global-context", "",                           "file where global-scoped values persist between runs; empty = off")
 	htmlFlag     := fs.String("html",           "",                           "path for a single-file HTML report with a timeline; empty = off")
 	junitFlag    := fs.String("junit",          "",                           "path for a JUnit XML report, read natively by GitLab and Jenkins; empty = off")
-	fs.Parse(args)
+	_ = fs.Parse(args) // ExitOnError: bad flags exit before this returns
 
 	suite, err := loader.LoadSuite(*suiteFlag)
 	if err != nil {

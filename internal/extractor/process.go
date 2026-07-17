@@ -87,7 +87,7 @@ func (e *ProcessExtractor) nodeOf(path string) (Node, bool, error) {
 	if err != nil {
 		return Node{}, false, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // read-only: nothing to fail on close
 
 	meta := map[string]string{}
 	idLine := 0
