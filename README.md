@@ -19,6 +19,8 @@ persists, and every node runs.
 
 The core is framework-agnostic: it speaks the [agent protocol](docs/PROTOCOL.md) and dispatches through an `Executor`. Playwright is one adapter ([`adapters/playwright`](adapters/playwright/README.md)), not a dependency — see [`examples/playwright`](examples/playwright/README.md) for a browser suite and [`examples/process`](examples/process/README.md) for the same graph run by plain Python agents.
 
+Why the order comes from data contracts rather than `depends_on`, why the core is Go, and what running each node in its own process costs: [`docs/`](docs/README.md). What it measures out at, including where it loses: [`experiments/`](experiments/README.md).
+
 ## Architecture
 
 ```
