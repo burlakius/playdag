@@ -70,20 +70,57 @@ func (s *Scheduler) Push(node *loader.TestNode, affinity string) {
 // either because the queue is empty or because no free agent matches a waiting
 // node's tags.
 func (s *Scheduler) Next() (node *loader.TestNode, agent *Agent, ok bool) {
+	nodes, agent, ok := s.NextBatch(1)
+	if !ok {
+		return nil, nil, false
+	}
+	return nodes[0], agent, true
+}
+
+// NextBatch reserves up to max ready nodes for one agent, so that an executor
+// able to run them together pays for its framework startup once rather than
+// once per node. The first node is chosen exactly as Next would; the rest are
+// the highest-priority waiting nodes that the same agent can also run.
+//
+// Everything in the queue is ready, so no node in a batch can depend on another
+// in it: a node is only pushed once whatever it requires has been provided.
+func (s *Scheduler) NextBatch(max int) (nodes []*loader.TestNode, agent *Agent, ok bool) {
+	if max < 1 {
+		max = 1
+	}
+
 	var deferred []*item
-	for s.pq.Len() > 0 {
+	for s.pq.Len() > 0 && len(nodes) < max {
 		it := heap.Pop(&s.pq).(*item)
-		if a := s.freeAgentFor(it.node.Resources.Tags, it.affinity); a != nil {
+
+		if agent == nil {
+			a := s.freeAgentFor(it.node.Resources.Tags, it.affinity)
+			if a == nil {
+				deferred = append(deferred, it)
+				continue
+			}
 			s.busy[a.Name] = true
-			node, agent, ok = it.node, a, true
-			break
+			agent = a
+		} else if !s.canJoin(agent, it) {
+			deferred = append(deferred, it)
+			continue
 		}
-		deferred = append(deferred, it)
+		nodes = append(nodes, it.node)
 	}
 	for _, it := range deferred {
 		heap.Push(&s.pq, it)
 	}
-	return node, agent, ok
+	return nodes, agent, agent != nil
+}
+
+// canJoin reports whether a queued node may ride along in a batch already bound
+// to this agent. A node pinned elsewhere waits for its own agent: running it
+// here would not find the session it needs.
+func (s *Scheduler) canJoin(a *Agent, it *item) bool {
+	if it.affinity != "" && it.affinity != a.Name {
+		return false
+	}
+	return a.satisfies(it.node.Resources.Tags)
 }
 
 // freeAgentFor picks an idle agent that can run the node. A node with an

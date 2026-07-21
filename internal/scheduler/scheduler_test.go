@@ -227,3 +227,73 @@ func TestNext_AffineNodeDoesNotBlockOthers(t *testing.T) {
 		t.Fatalf("want free on a2, got %v (ok=%v)", n, ok)
 	}
 }
+
+func ids(nodes []*loader.TestNode) []string {
+	out := make([]string, len(nodes))
+	for i, n := range nodes {
+		out[i] = n.TestID
+	}
+	return out
+}
+
+func TestNextBatch_TakesTheQueueInOrder(t *testing.T) {
+	s := New([]*Agent{{Name: "a1"}}, nil)
+	for _, n := range []*loader.TestNode{nodeP("A", 1, nil), nodeP("B", 10, nil), nodeP("C", 5, nil)} {
+		s.Push(n, "")
+	}
+
+	nodes, agent, ok := s.NextBatch(2)
+	if !ok || agent.Name != "a1" {
+		t.Fatalf("NextBatch: ok=%v agent=%v", ok, agent)
+	}
+	if got := ids(nodes); !reflect.DeepEqual(got, []string{"B", "C"}) {
+		t.Fatalf("got %v, want the two highest-priority nodes", got)
+	}
+	if s.Pending() != 1 {
+		t.Errorf("pending = %d, want the untaken node still queued", s.Pending())
+	}
+}
+
+// A batch is bound to one agent, so a node needing a tag that agent lacks has to
+// wait rather than ride along.
+func TestNextBatch_OnlyNodesTheAgentCanRun(t *testing.T) {
+	s := New([]*Agent{{Name: "plain"}, {Name: "gpu", Tags: []string{"gpu"}}}, nil)
+	s.Push(nodeP("plain-1", 10, nil), "")
+	s.Push(nodeP("needs-gpu", 9, []string{"gpu"}), "")
+	s.Push(nodeP("plain-2", 8, nil), "")
+
+	nodes, agent, ok := s.NextBatch(4)
+	if !ok {
+		t.Fatal("NextBatch found nothing")
+	}
+	if agent.Name != "plain" {
+		t.Fatalf("agent = %s, want the first free one", agent.Name)
+	}
+	if got := ids(nodes); !reflect.DeepEqual(got, []string{"plain-1", "plain-2"}) {
+		t.Fatalf("got %v, want the tagged node left behind", got)
+	}
+}
+
+// A node pinned to another agent holds its session there; batching it here would
+// run it where its context does not exist.
+func TestNextBatch_RespectsAffinity(t *testing.T) {
+	s := New([]*Agent{{Name: "a1"}, {Name: "a2"}}, nil)
+	s.Push(nodeP("free", 10, nil), "")
+	s.Push(nodeP("pinned-a2", 9, nil), "a2")
+	s.Push(nodeP("pinned-a1", 8, nil), "a1")
+
+	nodes, agent, _ := s.NextBatch(4)
+	if agent.Name != "a1" {
+		t.Fatalf("agent = %s", agent.Name)
+	}
+	if got := ids(nodes); !reflect.DeepEqual(got, []string{"free", "pinned-a1"}) {
+		t.Fatalf("got %v, want the node pinned elsewhere left behind", got)
+	}
+}
+
+func TestNextBatch_EmptyQueue(t *testing.T) {
+	s := New([]*Agent{{Name: "a1"}}, nil)
+	if _, _, ok := s.NextBatch(4); ok {
+		t.Fatal("an empty queue must yield nothing")
+	}
+}
