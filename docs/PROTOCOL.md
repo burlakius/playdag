@@ -1,4 +1,4 @@
-# playdag agent protocol v1.0
+# playdag agent protocol v1.1
 
 The orchestrator never links against a test framework. It talks to *agents* over
 this contract, so an adapter can be written in any language that can parse JSON.
@@ -8,7 +8,7 @@ An agent is any program that:
 1. receives a **request** as JSON — on stdin, or in the `PLAYDAG_CONTEXT`
    environment variable when the process cannot read stdin (a framework CLI, for
    example);
-2. runs exactly one test node;
+2. runs one test node, or a batch of them (see below);
 3. writes a **response** as JSON to stdout, and exits.
 
 Anything an agent prints on stderr is diagnostic output; it is surfaced in the
@@ -18,7 +18,7 @@ error message when the process fails, and is otherwise ignored.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "test_id": "card.create",
   "script": "tests/card/create.spec.ts",
   "attempt": 1,
@@ -33,7 +33,7 @@ error message when the process fails, and is otherwise ignored.
 
 | field            | meaning                                                     |
 | ---------------- | ----------------------------------------------------------- |
-| `schema_version` | version of this contract; `"1.0"`                            |
+| `schema_version` | version of this contract; `"1.1"`                            |
 | `test_id`        | node identifier from the suite                               |
 | `script`         | script path as declared in the suite                         |
 | `attempt`        | 1-based attempt number; `> 1` means this is a retry          |
@@ -54,7 +54,7 @@ silently overwrite a field.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "status": "PASSED",
   "provides": { "card.id": 42 },
   "error": "",
@@ -66,7 +66,7 @@ silently overwrite a field.
 
 | field            | meaning                                                          |
 | ---------------- | ---------------------------------------------------------------- |
-| `schema_version` | optional; if present it must be `"1.0"`                          |
+| `schema_version` | optional; if present it must be `"1.0"` or `"1.1"`               |
 | `status`         | `PASSED`, `FAILED`, or `SKIPPED` — required                      |
 | `provides`       | values for the keys the node provides                            |
 | `error`          | failure detail; shown in the report when the node did not pass    |
@@ -79,6 +79,50 @@ they become available to dependent nodes through the context store.
 A missing `schema_version` is read as a pre-envelope agent and accepted. Any
 other version, a missing or unknown `status`, malformed JSON, or empty output is
 a protocol violation: the node is failed with a diagnostic rather than guessed at.
+
+## Batches
+
+Starting a framework process costs the same whether it runs one test or ten, and
+that cost is what a node pays for its isolation. An agent may therefore declare
+that it can run several nodes at once; the orchestrator then sends a **batch
+request** instead, in the same `PLAYDAG_CONTEXT` variable.
+
+```json
+{
+  "schema_version": "1.1",
+  "tests": [
+    { "schema_version": "1.1", "test_id": "card.rename", "context": { "card.id": "42" }, "attempt": 1 },
+    { "schema_version": "1.1", "test_id": "card.label",  "context": { "card.id": "42" }, "attempt": 1 }
+  ]
+}
+```
+
+Each entry is an ordinary request. Context is **not** mirrored at the top level
+here: a batch has no single context, and no agent predates this envelope.
+
+The response is keyed by `test_id`:
+
+```json
+{
+  "schema_version": "1.1",
+  "results": {
+    "card.rename": { "status": "PASSED", "provides": { "card.title": "new" } },
+    "card.label":  { "status": "FAILED", "error": "label not applied" }
+  }
+}
+```
+
+Two rules make a batch safe to reason about:
+
+- **The nodes are independent.** The orchestrator only batches nodes that are
+  ready at the same moment, so none of them can require what another provides.
+  The agent may run them in any order.
+- **Every requested id must be answered.** A node the agent never reached is a
+  reporting failure, not a pass; the orchestrator rejects a response that is
+  missing one rather than let the suite quietly shrink.
+
+An agent that does not implement batches is not asked to: the orchestrator falls
+back to one request per node, which is what a v1.0 agent understands.
 
 ## Minimal agent
 

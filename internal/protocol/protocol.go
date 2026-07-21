@@ -13,7 +13,12 @@ import (
 
 // Version is the schema_version this orchestrator emits. A response may omit
 // schema_version, which identifies an agent written before the envelope existed.
-const Version = "1.0"
+const Version = "1.1"
+
+// supported lists the schema versions an agent may answer in. 1.0 agents know
+// nothing of batches but their single-node responses are unchanged, so they keep
+// working against a 1.1 orchestrator.
+var supported = map[string]bool{"1.0": true, Version: true}
 
 // ContextEnv carries the encoded request for agents that cannot read stdin,
 // such as a test framework launched through its own CLI.
@@ -119,7 +124,7 @@ func DecodeResponse(data []byte) (Response, error) {
 		return Response{}, fmt.Errorf("protocol: invalid JSON: %w", err)
 	}
 
-	if raw.SchemaVersion != "" && raw.SchemaVersion != Version {
+	if raw.SchemaVersion != "" && !supported[raw.SchemaVersion] {
 		return Response{}, fmt.Errorf("protocol: unsupported schema_version %q (want %q)", raw.SchemaVersion, Version)
 	}
 	switch raw.Status {
