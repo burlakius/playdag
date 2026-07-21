@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"playdag/internal/loader"
 	"playdag/internal/protocol"
 )
 
@@ -104,8 +105,8 @@ echo '{"status":"PASSED"}' > "$PLAYDAG_RESULT"`)
 }
 
 func TestPlaywrightArgs_GrepsTheNodeTag(t *testing.T) {
-	args := playwrightArgs(node("card.create", "tests/card.spec.ts", nil, nil))
-	want := []string{"playwright", "test", "tests/card.spec.ts", "--grep", `@id:card\.create`, "--retries=0", "--reporter=" + reporterModule}
+	args := playwrightArgs([]*loader.TestNode{node("card.create", "tests/card.spec.ts", nil, nil)})
+	want := []string{"playwright", "test", "tests/card.spec.ts", "--grep", `@id:card\.create`, "--workers=1", "--retries=0", "--reporter=" + reporterModule}
 
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Fatalf("args:\n want %v\n got  %v", want, args)
@@ -113,7 +114,7 @@ func TestPlaywrightArgs_GrepsTheNodeTag(t *testing.T) {
 }
 
 func TestPlaywrightArgs_NoScript(t *testing.T) {
-	args := playwrightArgs(node("card.create", "", nil, nil))
+	args := playwrightArgs([]*loader.TestNode{node("card.create", "", nil, nil)})
 	if args[2] != "--grep" {
 		t.Fatalf("an empty script must not become an argument: %v", args)
 	}
@@ -123,5 +124,74 @@ func TestPlaywrightArgs_NoScript(t *testing.T) {
 func TestGrepFor_QuotesTheID(t *testing.T) {
 	if got := grepFor("card.create"); got != `@id:card\.create` {
 		t.Fatalf(`want @id:card\.create, got %s`, got)
+	}
+}
+
+func TestPlaywrightArgs_BatchSelectsEveryNode(t *testing.T) {
+	args := playwrightArgs([]*loader.TestNode{
+		node("card.rename", "tests/card.spec.ts", nil, nil),
+		node("card.label", "tests/label.spec.ts", nil, nil),
+		node("card.move", "tests/card.spec.ts", nil, nil),
+	})
+	want := []string{
+		"playwright", "test", "tests/card.spec.ts", "tests/label.spec.ts",
+		"--grep", `(@id:card\.rename|@id:card\.label|@id:card\.move)`,
+		"--workers=1", "--retries=0", "--reporter=" + reporterModule,
+	}
+
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Fatalf("args:\n want %v\n got  %v", want, args)
+	}
+}
+
+func TestPlaywright_RunBatchSplitsResultsByNode(t *testing.T) {
+	fakeNpx(t, `echo '{"schema_version":"1.1","results":{
+		"card.rename":{"status":"PASSED","provides":{"card.title":"new"}},
+		"card.label":{"status":"FAILED","error":"label not applied"}}}' > "$PLAYDAG_RESULT"`)
+	e := NewPlaywright(t.TempDir(), "")
+
+	nodes := []*loader.TestNode{node("card.rename", "", nil, nil), node("card.label", "", nil, nil)}
+	res, err := e.RunBatch(context.Background(), nodes, []Input{{Attempt: 1}, {Attempt: 1}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res[0].Status != protocol.StatusPassed || res[0].Provides["card.title"] != "new" {
+		t.Errorf("first node: %+v", res[0])
+	}
+	if res[1].Status != protocol.StatusFailed || !strings.Contains(res[1].Error, "label not applied") {
+		t.Errorf("second node: %+v", res[1])
+	}
+}
+
+// Each node in a batch must see its own context and nothing else, or declaring
+// what a test requires would stop meaning anything.
+func TestPlaywright_RunBatchKeepsContextsApart(t *testing.T) {
+	fakeNpx(t, `
+case "$PLAYDAG_CONTEXT" in
+  *'"a.key":"a"'*'"b.key":"b"'*) echo '{"results":{"a":{"status":"PASSED"},"b":{"status":"PASSED"}}}' > "$PLAYDAG_RESULT" ;;
+  *) echo '{"results":{"a":{"status":"FAILED","error":"contexts merged"},"b":{"status":"FAILED"}}}' > "$PLAYDAG_RESULT" ;;
+esac`)
+	e := NewPlaywright(t.TempDir(), "")
+
+	nodes := []*loader.TestNode{node("a", "", []string{"a.key"}, nil), node("b", "", []string{"b.key"}, nil)}
+	res, err := e.RunBatch(context.Background(), nodes, []Input{
+		{Context: map[string]string{"a.key": "a"}, Attempt: 1},
+		{Context: map[string]string{"b.key": "b"}, Attempt: 1},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res[0].Status != protocol.StatusPassed {
+		t.Fatalf("each node must get its own context: %q", res[0].Error)
+	}
+}
+
+func TestPlaywright_RunBatchNoResponseIsAnError(t *testing.T) {
+	fakeNpx(t, `echo "Error: No tests found" >&2; exit 1`)
+	e := NewPlaywright(t.TempDir(), "")
+
+	_, err := e.RunBatch(context.Background(), []*loader.TestNode{node("a", "", nil, nil)}, []Input{{Attempt: 1}})
+	if err == nil || !strings.Contains(err.Error(), "No tests found") {
+		t.Fatalf("expected the playwright output in the error, got: %v", err)
 	}
 }

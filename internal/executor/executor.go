@@ -34,6 +34,17 @@ type Executor interface {
 	Run(ctx context.Context, node *loader.TestNode, in Input) (Result, error)
 }
 
+// Batcher is implemented by an executor that can run several nodes in one agent
+// process, amortising a framework startup that costs the same either way. The
+// runner only ever passes nodes that are ready at the same moment, so none of
+// them can require what another provides and the order within a batch is free.
+//
+// The returned slice has one Result per node, in the order given. An error means
+// the batch produced nothing usable, and the runner fails every node in it.
+type Batcher interface {
+	RunBatch(ctx context.Context, nodes []*loader.TestNode, ins []Input) ([]Result, error)
+}
+
 // Names lists the executors New accepts, for CLI help and error messages.
 var Names = []string{"process", "playwright"}
 
