@@ -1,6 +1,7 @@
 import { test as base } from '@playwright/test';
-import { PROVIDE_ANNOTATION_PREFIX } from './annotations';
-import { readRequest } from './protocol';
+import type { TestInfo } from '@playwright/test';
+import { ID_ANNOTATION, PROVIDE_ANNOTATION_PREFIX } from './annotations';
+import { requestFor } from './protocol';
 import type { PlaydagRequest } from './protocol';
 
 /**
@@ -29,6 +30,11 @@ function contextOf(req: PlaydagRequest | null): Record<string, string> {
   return req?.context ?? {};
 }
 
+/** The node this test declares itself to be, which is how it finds its own request. */
+function nodeIdOf(testInfo: TestInfo): string | undefined {
+  return testInfo.annotations.find((a) => a.type === ID_ANNOTATION)?.description;
+}
+
 /**
  * `test` extended with the playdag fixture. Import it instead of @playwright/test.
  *
@@ -37,7 +43,7 @@ function contextOf(req: PlaydagRequest | null): Record<string, string> {
  */
 export const test = base.extend<PlaydagFixtures>({
   playdag: async ({}, use, testInfo) => {
-    const req = readRequest();
+    const req = requestFor(nodeIdOf(testInfo));
     const context = contextOf(req);
 
     const ctx: PlaydagContext = {

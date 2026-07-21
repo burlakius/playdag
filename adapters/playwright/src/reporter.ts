@@ -1,10 +1,12 @@
 import { writeFileSync } from 'node:fs';
 import type { Reporter, TestCase, TestResult } from '@playwright/test/reporter';
-import { PROVIDE_ANNOTATION_PREFIX } from './annotations';
-import { RESULT_ENV, SCHEMA_VERSION } from './protocol';
+import { ID_ANNOTATION, PROVIDE_ANNOTATION_PREFIX } from './annotations';
+import { readEnvelope, RESULT_ENV, SCHEMA_VERSION } from './protocol';
 import type { PlaydagArtifact, PlaydagResponse, Status } from './protocol';
 
 const ARTIFACT_TYPES = ['trace', 'video', 'screenshot'];
+
+const NOT_RUN = 'playdag: no test matched the requested node';
 
 /** Maps Playwright's outcome onto a protocol status. */
 function toStatus(result: TestResult): Status {
@@ -37,6 +39,10 @@ function providesOf(test: TestCase, result: TestResult): Record<string, string> 
   return provides;
 }
 
+function nodeIdOf(test: TestCase, result: TestResult): string | undefined {
+  return annotationsOf(test, result).find((a) => a.type === ID_ANNOTATION)?.description;
+}
+
 function artifactsOf(result: TestResult): PlaydagArtifact[] {
   const artifacts: PlaydagArtifact[] = [];
   for (const att of result.attachments) {
@@ -47,48 +53,80 @@ function artifactsOf(result: TestResult): PlaydagArtifact[] {
   return artifacts;
 }
 
+function responseOf(test: TestCase, result: TestResult): PlaydagResponse {
+  return {
+    schema_version: SCHEMA_VERSION,
+    status: toStatus(result),
+    provides: providesOf(test, result),
+    error: result.error?.message ?? '',
+    artifacts: artifactsOf(result),
+  };
+}
+
 /**
- * Reports one node's outcome to the orchestrator in the playdag protocol.
+ * Reports node outcomes to the orchestrator in the playdag protocol.
  *
- * The orchestrator runs a single node per Playwright process, so exactly one
- * test is expected to match. The response goes to the file named by
- * PLAYDAG_RESULT, keeping it clear of everything Playwright prints on stdout.
+ * The response goes to the file named by PLAYDAG_RESULT, keeping it clear of
+ * everything Playwright prints on stdout. Its shape mirrors the request: a
+ * single node answers with one response, a batch answers with a map keyed by
+ * node id, and every node asked for is answered — a node that never ran is
+ * reported as such rather than left out.
  */
 export default class PlaydagReporter implements Reporter {
-  private response: PlaydagResponse = {
-    schema_version: SCHEMA_VERSION,
-    status: 'FAILED',
-    error: 'playdag: no test matched the requested node',
-  };
+  private readonly requested = readEnvelope();
+  private readonly results = new Map<string, PlaydagResponse>();
   private seen = 0;
+
+  onBegin(): void {
+    for (const req of this.requested?.tests ?? []) {
+      this.results.set(req.test_id, { schema_version: SCHEMA_VERSION, status: 'FAILED', error: NOT_RUN });
+    }
+  }
 
   onTestEnd(test: TestCase, result: TestResult): void {
     this.seen += 1;
-    if (this.seen > 1) {
-      this.response = {
-        schema_version: SCHEMA_VERSION,
-        status: 'FAILED',
-        error: `playdag: ${this.seen} tests matched one node; an @id: tag must select exactly one test`,
-      };
+    const id = nodeIdOf(test, result);
+    if (id !== undefined) {
+      this.results.set(id, responseOf(test, result));
       return;
     }
-
-    this.response = {
-      schema_version: SCHEMA_VERSION,
-      status: toStatus(result),
-      provides: providesOf(test, result),
-      error: result.error?.message ?? '',
-      artifacts: artifactsOf(result),
-    };
+    // A test with no id tag can only be matched positionally, and only when a
+    // single node was asked for.
+    const only = this.requested?.tests[0]?.test_id;
+    if (only !== undefined && !this.requested?.batch) {
+      this.results.set(only, responseOf(test, result));
+    }
   }
 
   onEnd(): void {
+    const payload = JSON.stringify(this.envelope());
     const path = process.env[RESULT_ENV];
-    const payload = JSON.stringify(this.response);
     if (!path) {
       process.stdout.write(payload + '\n');
       return;
     }
     writeFileSync(path, payload);
+  }
+
+  private envelope(): unknown {
+    if (this.requested?.batch) {
+      return { schema_version: SCHEMA_VERSION, results: Object.fromEntries(this.results) };
+    }
+
+    const only = this.requested?.tests[0]?.test_id;
+    if (only !== undefined && this.seen > 1) {
+      return {
+        schema_version: SCHEMA_VERSION,
+        status: 'FAILED',
+        error: `playdag: ${this.seen} tests matched one node; an @id: tag must select exactly one test`,
+      };
+    }
+    return (
+      (only !== undefined ? this.results.get(only) : undefined) ?? {
+        schema_version: SCHEMA_VERSION,
+        status: 'FAILED',
+        error: NOT_RUN,
+      }
+    );
   }
 }

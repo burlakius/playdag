@@ -4,7 +4,10 @@
  * Playwright's business. See docs/PROTOCOL.md for the specification.
  */
 
-export const SCHEMA_VERSION = '1.0';
+export const SCHEMA_VERSION = '1.1';
+
+/** Versions this adapter accepts from the orchestrator. */
+const SUPPORTED_VERSIONS = ['1.0', SCHEMA_VERSION];
 
 /** Environment variable carrying the encoded request. */
 export const CONTEXT_ENV = 'PLAYDAG_CONTEXT';
@@ -38,25 +41,54 @@ export interface PlaydagResponse {
   artifacts?: PlaydagArtifact[];
 }
 
+export interface PlaydagBatchResponse {
+  schema_version: string;
+  results: Record<string, PlaydagResponse>;
+}
+
+/** What the orchestrator asked this process to run. */
+export interface Envelope {
+  /** True when the orchestrator sent several nodes at once. */
+  batch: boolean;
+  tests: PlaydagRequest[];
+}
+
 /**
- * Reads the request the orchestrator passed in. Returns null when the tests are
- * run directly by Playwright rather than through playdag, which is what lets the
- * same spec files be debugged with `npx playwright test`.
+ * Reads what the orchestrator passed in: one node, a batch of them, or nothing
+ * at all when the tests are run directly by Playwright. That last case is what
+ * lets the same spec files be debugged with `npx playwright test`.
  */
-export function readRequest(env: NodeJS.ProcessEnv = process.env): PlaydagRequest | null {
+export function readEnvelope(env: NodeJS.ProcessEnv = process.env): Envelope | null {
   const raw = env[CONTEXT_ENV];
   if (!raw) return null;
 
-  let req: PlaydagRequest;
+  let parsed: { schema_version?: string; tests?: PlaydagRequest[] };
   try {
-    req = JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (e) {
     throw new Error(`playdag: ${CONTEXT_ENV} is not valid JSON: ${(e as Error).message}`);
   }
-  if (req.schema_version !== SCHEMA_VERSION) {
+  if (!SUPPORTED_VERSIONS.includes(parsed.schema_version ?? '')) {
     throw new Error(
-      `playdag: unsupported schema_version ${JSON.stringify(req.schema_version)} (want ${SCHEMA_VERSION})`,
+      `playdag: unsupported schema_version ${JSON.stringify(parsed.schema_version)} ` +
+        `(want one of ${SUPPORTED_VERSIONS.join(', ')})`,
     );
   }
-  return req;
+
+  if (Array.isArray(parsed.tests)) {
+    return { batch: true, tests: parsed.tests };
+  }
+  return { batch: false, tests: [parsed as PlaydagRequest] };
+}
+
+/**
+ * The request for one test, matched by node id. A batch process runs several
+ * tests and each must see only its own context — handing a test the whole batch
+ * would defeat the contract that says what it is allowed to read.
+ */
+export function requestFor(testId: string | undefined, env?: NodeJS.ProcessEnv): PlaydagRequest | null {
+  const envelope = readEnvelope(env);
+  if (!envelope) return null;
+  if (!envelope.batch) return envelope.tests[0] ?? null;
+  return envelope.tests.find((t) => t.test_id === testId) ?? null;
 }
