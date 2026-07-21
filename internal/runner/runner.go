@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type AgentResult struct {
 	Attempts  int                 `json:"attempts,omitempty"`    // attempts the node took
 	Flaky     bool                `json:"flaky,omitempty"`       // passed, but only after a retry
 	Cached    bool                `json:"cached,omitempty"`      // not run: its global values survived a previous run
+	Batch     int                 `json:"batch,omitempty"`       // nodes that shared this one's process; 0 when it ran alone
 
 	// StartedAt and FinishedAt place the node on the run's timeline. They are
 	// zero for a node that never ran.
@@ -47,6 +49,10 @@ type RunOptions struct {
 	Agents         []*scheduler.Agent // explicit agent pool; empty → MaxConcurrency universal agents
 	FailFast       bool               // stop the run as soon as a BLOCKER node fails
 	MaxFailures    int                // stop after this many failures; 0 → no limit
+
+	// BatchSize is how many ready nodes one agent may run in a single process,
+	// when the executor supports it. 0 or 1 gives a process per node.
+	BatchSize int
 }
 
 // errFailFast and errMaxFailures are the reasons a run stops itself. They are
@@ -117,11 +123,18 @@ func (r *Runner) Results() map[string]AgentResult {
 	return cp
 }
 
-// nodeCompletion carries the outcome of a finished goroutine back to Run.
+// nodeCompletion carries the outcome of one node back to Run.
 type nodeCompletion struct {
 	node   *loader.TestNode
 	agent  *scheduler.Agent
 	result AgentResult
+}
+
+// groupCompletion is what one goroutine reports: everything the agent it held
+// finished, which is a single node unless the nodes were batched.
+type groupCompletion struct {
+	agent *scheduler.Agent
+	nodes []nodeCompletion
 }
 
 // Run drives the orchestration loop until every node reaches a terminal state,
@@ -136,7 +149,7 @@ func (r *Runner) Run(ctx context.Context) error {
 
 	// Buffer covers every agent so a finishing goroutine never blocks on send,
 	// even while the main loop sits in wg.Wait during cancellation.
-	done := make(chan nodeCompletion, r.agents)
+	done := make(chan groupCompletion, r.agents)
 	inFlight := 0
 	stopping := false
 
@@ -147,17 +160,18 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		if !stopping {
 			for {
-				node, agent, ok := r.sched.Next()
+				nodes, agent, ok := r.sched.NextBatch(r.batchSize())
 				if !ok {
 					break
 				}
-				r.dag.MarkRunning(node.TestID)
+				for _, n := range nodes {
+					r.dag.MarkRunning(n.TestID)
+				}
 				inFlight++
 				r.wg.Add(1)
 				go func() {
 					defer r.wg.Done()
-					result := r.runNode(runCtx, node, agent)
-					done <- nodeCompletion{node: node, agent: agent, result: result}
+					done <- groupCompletion{agent: agent, nodes: r.runGroup(runCtx, nodes, agent)}
 				}()
 			}
 		}
@@ -174,15 +188,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			r.wg.Wait()
 			return ctx.Err()
-		case c := <-done:
+		case group := <-done:
 			inFlight--
-			r.sched.Release(c.agent)
-			r.complete(c)
+			r.sched.Release(group.agent)
+			for _, c := range group.nodes {
+				r.complete(c)
 
-			if reason := r.stopReason(c); reason != nil && !stopping {
-				stopping = true
-				r.log("STOP", c.node.TestID, reason.Error()+": cancelling nodes in flight")
-				cancel(reason)
+				if reason := r.stopReason(c); reason != nil && !stopping {
+					stopping = true
+					r.log("STOP", c.node.TestID, reason.Error()+": cancelling nodes in flight")
+					cancel(reason)
+				}
 			}
 		}
 	}
@@ -331,33 +347,75 @@ func (r *Runner) cancelPending() {
 	}
 }
 
+// batchSize is how many nodes an agent may take at once. Below 1 means one node
+// per process, which is the default and what every executor supports.
+func (r *Runner) batchSize() int {
+	if r.opts.BatchSize < 1 {
+		return 1
+	}
+	return r.opts.BatchSize
+}
+
+// runGroup executes everything one agent was handed. A single node, or an
+// executor that cannot batch, goes down the ordinary path; otherwise the first
+// attempt is made for the whole group in one process, which is where the
+// framework startup is saved, and only what failed is retried on its own. A
+// retry is rare by definition, and running it alone keeps the retry policy a
+// property of the node rather than of whoever it happened to be batched with.
+func (r *Runner) runGroup(ctx context.Context, nodes []*loader.TestNode, agent *scheduler.Agent) []nodeCompletion {
+	batcher, canBatch := r.opts.Executor.(executor.Batcher)
+	if !canBatch || len(nodes) == 1 {
+		out := make([]nodeCompletion, len(nodes))
+		for i, node := range nodes {
+			out[i] = nodeCompletion{node: node, agent: agent, result: r.runNode(ctx, node, agent)}
+		}
+		return out
+	}
+
+	ids := make([]string, len(nodes))
+	for i, n := range nodes {
+		ids[i] = n.TestID
+	}
+	r.log("BATCH", agent.Name, fmt.Sprintf("%d nodes in one process: %s", len(nodes), strings.Join(ids, ", ")))
+
+	start := time.Now()
+	first := r.execBatch(ctx, nodes, agent, batcher)
+
+	out := make([]nodeCompletion, len(nodes))
+	for i, node := range nodes {
+		result := r.settle(ctx, node, agent, start, first[i], 1)
+		result.Batch = len(nodes)
+		out[i] = nodeCompletion{node: node, agent: agent, result: result}
+	}
+	return out
+}
+
 // runNode executes a single node with retries and writes its provides into the
 // store on success. It logs every attempt and the final outcome.
 func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *scheduler.Agent) AgentResult {
-	nodeStart := time.Now()
-	maxAttempts := 1 + node.Policy.Retries
-	if maxAttempts < 1 {
-		maxAttempts = 1
-	}
+	start := time.Now()
+	r.log("RUN", node.TestID, fmt.Sprintf("attempt 1/%d", maxAttempts(node)))
+	return r.settle(ctx, node, agent, start, r.execNode(ctx, node, agent, 1), 1)
+}
 
-	var result AgentResult
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		r.log("RUN", node.TestID, fmt.Sprintf("attempt %d/%d", attempt, maxAttempts))
-		attemptStart := time.Now()
-		result = r.execNode(ctx, node, agent, attempt)
-		attemptElapsed := time.Since(attemptStart)
-
+// settle takes the outcome of the attempt just made and carries the node to a
+// terminal state, retrying while the policy allows. It is separate from runNode
+// so that an attempt made for a whole batch at once can be finished off here,
+// node by node.
+func (r *Runner) settle(ctx context.Context, node *loader.TestNode, agent *scheduler.Agent, start time.Time, result AgentResult, attempt int) AgentResult {
+	max := maxAttempts(node)
+	for {
 		if result.Status == protocol.StatusPassed {
-			result = r.stamp(result, node, agent, nodeStart)
+			result = r.stamp(result, node, agent, start)
 			result.Attempts = attempt
 			// A node that only passed on a retry passed under a different roll of
 			// the dice than the one the suite is supposed to test. Say so, rather
 			// than let a green tick hide it.
 			result.Flaky = attempt > 1
 			if result.Flaky {
-				r.log("FLAKY", node.TestID, fmt.Sprintf("passed on attempt %d/%d", attempt, maxAttempts))
+				r.log("FLAKY", node.TestID, fmt.Sprintf("passed on attempt %d/%d", attempt, max))
 			}
-			r.log("PASS", node.TestID, fmt.Sprintf("%.2fs", attemptElapsed.Seconds()))
+			r.log("PASS", node.TestID, fmt.Sprintf("%.2fs", time.Since(start).Seconds()))
 			for k, v := range result.Provides {
 				r.store.Set(k, v, node.TestID, node.Contract.Scope, agent.Name)
 			}
@@ -366,29 +424,42 @@ func (r *Runner) runNode(ctx context.Context, node *loader.TestNode, agent *sche
 		// A cancelled node was not tried, so retrying it would only restart work
 		// the run has already decided to abandon.
 		if result.Status == protocol.StatusSkipped {
-			result = r.stamp(result, node, agent, nodeStart)
+			result = r.stamp(result, node, agent, start)
 			r.log("SKIP", node.TestID, result.Error)
 			return result
 		}
+		if attempt >= max {
+			break
+		}
 
-		if attempt < maxAttempts {
-			if wait := retryDelay(node.Policy, attempt); wait > 0 {
-				r.log("WAIT", node.TestID, fmt.Sprintf("%s before retry %d", wait, attempt+1))
-				select {
-				case <-time.After(wait):
-				case <-ctx.Done():
-					result = r.stamp(AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}, node, agent, nodeStart)
-					r.log("SKIP", node.TestID, result.Error)
-					return result
-				}
+		if wait := retryDelay(node.Policy, attempt); wait > 0 {
+			r.log("WAIT", node.TestID, fmt.Sprintf("%s before retry %d", wait, attempt+1))
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				result = r.stamp(AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}, node, agent, start)
+				r.log("SKIP", node.TestID, result.Error)
+				return result
 			}
 		}
+
+		attempt++
+		r.log("RUN", node.TestID, fmt.Sprintf("attempt %d/%d", attempt, max))
+		result = r.execNode(ctx, node, agent, attempt)
 	}
 
-	result = r.stamp(result, node, agent, nodeStart)
-	result.Attempts = maxAttempts
+	result = r.stamp(result, node, agent, start)
+	result.Attempts = max
 	r.log("FAIL", node.TestID, result.Error)
 	return result
+}
+
+// maxAttempts is how many times a node may be tried before it counts as failed.
+func maxAttempts(node *loader.TestNode) int {
+	if n := 1 + node.Policy.Retries; n > 1 {
+		return n
+	}
+	return 1
 }
 
 // stamp places a finished node on the run's timeline. The span covers every
@@ -449,19 +520,92 @@ func (r *Runner) execNode(ctx context.Context, node *loader.TestNode, agent *sch
 
 	res, err := r.opts.Executor.Run(execCtx, node, executor.Input{Context: ctxData, Attempt: attempt})
 	if err != nil {
-		// The run tearing this node down is not the node failing: report what
-		// actually happened, or the report would blame a test for being killed.
-		if cause := context.Cause(ctx); errors.Is(cause, errFailFast) || errors.Is(cause, errMaxFailures) {
-			return AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}
-		}
-		msg := err.Error()
-		if execCtx.Err() == context.DeadlineExceeded {
-			msg = "timeout exceeded"
-		}
-		return AgentResult{Status: protocol.StatusFailed, Error: msg}
+		return r.transportFailure(ctx, execCtx, err)
 	}
 
 	return AgentResult{Status: res.Status, Provides: res.Provides, Error: res.Error, Artifacts: res.Artifacts}
+}
+
+// execBatch makes one attempt at every node in the group in a single agent
+// process. A node whose context cannot be resolved is failed here and left out
+// of the batch; the rest still run, since nothing in a batch depends on anything
+// else in it.
+func (r *Runner) execBatch(ctx context.Context, nodes []*loader.TestNode, agent *scheduler.Agent, batcher executor.Batcher) []AgentResult {
+	results := make([]AgentResult, len(nodes))
+
+	var (
+		send    []*loader.TestNode
+		ins     []executor.Input
+		sendIdx []int
+	)
+	for i, node := range nodes {
+		ctxData, err := r.store.Collect(node.Contract.Requires, agent.Name)
+		if err != nil {
+			results[i] = AgentResult{Status: protocol.StatusFailed, Error: err.Error()}
+			continue
+		}
+		send = append(send, node)
+		ins = append(ins, executor.Input{Context: ctxData, Attempt: 1})
+		sendIdx = append(sendIdx, i)
+	}
+	if len(send) == 0 {
+		return results
+	}
+
+	execCtx, cancel := batchContext(ctx, send)
+	defer cancel()
+
+	batched, err := batcher.RunBatch(execCtx, send, ins)
+	if err != nil {
+		// The nodes shared a process, so there is no telling which of them a
+		// transport failure belongs to: all of them get the same answer.
+		failure := r.transportFailure(ctx, execCtx, err)
+		for _, i := range sendIdx {
+			results[i] = failure
+		}
+		return results
+	}
+	for n, i := range sendIdx {
+		results[i] = AgentResult{
+			Status:    batched[n].Status,
+			Provides:  batched[n].Provides,
+			Error:     batched[n].Error,
+			Artifacts: batched[n].Artifacts,
+		}
+	}
+	return results
+}
+
+// batchContext bounds a batch by the sum of its nodes' timeouts, because they
+// run one after another in the shared process. A node without a timeout leaves
+// the batch unbounded, which is what that node asked for on its own.
+func batchContext(ctx context.Context, nodes []*loader.TestNode) (context.Context, context.CancelFunc) {
+	total := time.Duration(0)
+	for _, node := range nodes {
+		if node.Policy.Timeout == "" {
+			return ctx, func() {}
+		}
+		d, err := time.ParseDuration(node.Policy.Timeout)
+		if err != nil {
+			return ctx, func() {}
+		}
+		total += d
+	}
+	return context.WithTimeout(ctx, total)
+}
+
+// transportFailure renders an executor error as a node outcome. The run tearing
+// a node down is not the node failing, and reporting it as a failure would
+// blame a test for being killed.
+func (r *Runner) transportFailure(ctx, execCtx context.Context, err error) AgentResult {
+	if cause := context.Cause(ctx); errors.Is(cause, errFailFast) || errors.Is(cause, errMaxFailures) {
+		return AgentResult{Status: protocol.StatusSkipped, Error: cancelReason(ctx)}
+	}
+	msg := err.Error()
+	if execCtx.Err() == context.DeadlineExceeded {
+		msg = "timeout exceeded"
+	}
+	return AgentResult{Status: protocol.StatusFailed, Error: msg}
 }
 
 // log emits a single execution event to stdout, either as a human-readable line
