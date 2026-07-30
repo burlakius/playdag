@@ -42,22 +42,22 @@ build-orchestrator:
 .setup-env: &setup-env
   image: python:3.12
   before_script:
-    # Клонуємо scrum-board
+    # Clone scrum-board
     - git clone $SCRUM_REPO scrum-board
     - cd scrum-board
 
-    # Встановлюємо залежності
+    # Install dependencies
     - pip install -r requirements.txt --quiet
     - pip install -r tests/requirements.txt --quiet
     - playwright install chromium
     - playwright install-deps chromium
 
-    # Готуємо БД
+    # Prepare database
     - python manage.py migrate --run-syncdb --no-input
     - mkdir -p logs/experiment
     - cd ..
 
-    # Перевіряємо оркестратор
+    # Verify orchestrator
     - ls -la orchestrator
     - chmod +x orchestrator
 
@@ -127,13 +127,13 @@ e2-sequential:
         python manage.py reset_test_db
         python manage.py seed_test_data --users 1
 
-        # Запускаємо Django
+        # Start Django
         python manage.py runserver 0.0.0.0:8000 &
         SERVER_PID=$!
         sleep 3
         cd ..
 
-        # Запускаємо оркестратор workers=1
+        # Start orchestrator with workers=1
         ./orchestrator \
           -suite scrum-board/tests/suite.json \
           -basedir scrum-board \
@@ -148,7 +148,7 @@ e2-sequential:
         sleep 1
       done
 
-    # Зводимо результати E2
+    # Aggregate E2 results
     - |
       echo "=== DEBUG: e2_run_1.json structure ==="
       cat scrum-board/logs/experiment/e2_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e2_run_1.json
@@ -215,7 +215,7 @@ e3-parallel:
         sleep 3
         cd ..
 
-        # Запускаємо оркестратор workers=4
+        # Start orchestrator with workers=4
         ./orchestrator \
           -suite scrum-board/tests/suite.json \
           -basedir scrum-board \
@@ -230,7 +230,7 @@ e3-parallel:
         sleep 1
       done
 
-    # Зводимо результати E3
+    # Aggregate E3 results
     - |
       echo "=== DEBUG: e3_run_1.json structure ==="
       cat scrum-board/logs/experiment/e3_run_1.json | python3 -m json.tool || cat scrum-board/logs/experiment/e3_run_1.json
@@ -279,7 +279,7 @@ e3-parallel:
 # ─── Stage 5: E4 fail-fast (a blocker breaks) ─────────────────────
 #
 # The login endpoint is broken on purpose. Both configurations meet the same
-# failure; the difference is what they do about it — the orchestrated run stops,
+# failure; the difference is what they do about it - the orchestrated run stops,
 # the baseline keeps running tests that cannot pass. The gap is the CI time
 # early termination saves.
 
