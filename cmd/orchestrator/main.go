@@ -164,7 +164,7 @@ func graphCmd(args []string) error {
 // extract generates a suite file from the metadata the tests declare.
 func extract(args []string) error {
 	fs := flag.NewFlagSet("extract", flag.ExitOnError)
-	extractorFlag := fs.String("extractor", "process",       "where metadata is read from: process (script headers) or playwright (test annotations)")
+	extractorFlag := fs.String("extractor", "process",       "where metadata is read from: process (script headers), playwright (test annotations) or pytest (markers)")
 	basedirFlag   := fs.String("basedir",   ".",             "directory holding the tests")
 	outFlag       := fs.String("o",         "suite.json",    "output path, or - for stdout")
 	suiteIDFlag   := fs.String("suite-id",  "",              "suite_id for the generated file; default: the basedir name")
@@ -223,12 +223,13 @@ func run(args []string) {
 	timeoutFlag  := fs.Int("timeout",           300,                          "global timeout in seconds")
 	jsonFlag     := fs.Bool("json",             false,                        "emit machine-readable JSON event log")
 	agentsFlag   := fs.String("agents",         "",                           "agent pool as JSON file or inline; default: universal agents")
-	executorFlag := fs.String("executor",       "process",                    "how nodes are run: process (any protocol-speaking agent) or playwright")
+	executorFlag := fs.String("executor",       "process",                    "how nodes are run: process (any protocol-speaking agent), playwright or pytest")
 	failfastFlag := fs.Bool("fail-fast",        false,                        "stop the run as soon as a BLOCKER node fails")
 	maxfailFlag  := fs.Int("max-failures",      0,                            "stop after this many failed nodes; 0 = no limit")
 	globalFlag   := fs.String("global-context", "",                           "file where global-scoped values persist between runs; empty = off")
 	htmlFlag     := fs.String("html",           "",                           "path for a single-file HTML report with a timeline; empty = off")
 	junitFlag    := fs.String("junit",          "",                           "path for a JUnit XML report, read natively by GitLab and Jenkins; empty = off")
+	batchFlag    := fs.Int("batch",             1,                            "nodes one agent may run in a single framework process; 1 = a process per node")
 	_ = fs.Parse(args) // ExitOnError: bad flags exit before this returns
 
 	suite, err := loader.LoadSuite(*suiteFlag)
@@ -281,6 +282,7 @@ func run(args []string) {
 		Agents:         agents,
 		FailFast:       *failfastFlag,
 		MaxFailures:    *maxfailFlag,
+		BatchSize:      *batchFlag,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutFlag)*time.Second)

@@ -79,7 +79,7 @@ type tick struct {
 type nodeRow struct {
 	ID        string
 	Status    string
-	Label     string // what the row is called: PASSED, FLAKY, CACHED, …
+	Label     string // what the row is called: PASSED, FLAKY, CACHED, ...
 	Duration  string
 	Attempts  int
 	Agent     string
@@ -202,10 +202,14 @@ func buildLanes(r *Report) []lane {
 		if width < minBarPct {
 			width = minBarPct
 		}
+		title := fmt.Sprintf("%s - %s, %.2fs on %s", id, statusLabel(res), res.Duration.Seconds(), res.Agent)
+		if res.Batch > 1 {
+			title += fmt.Sprintf(", in a batch of %d", res.Batch)
+		}
 		byAgent[res.Agent] = append(byAgent[res.Agent], bar{
 			ID:       id,
 			Status:   statusClass(res),
-			Title:    fmt.Sprintf("%s — %s, %.2fs on %s", id, statusLabel(res), res.Duration.Seconds(), res.Agent),
+			Title:    title,
 			LeftPct:  round2(clamp(left)),
 			WidthPct: round2(width),
 		})
@@ -217,13 +221,47 @@ func buildLanes(r *Report) []lane {
 	}
 	sort.Strings(agents)
 
-	lanes := make([]lane, 0, len(agents))
+	var lanes []lane
 	for _, a := range agents {
 		bars := byAgent[a]
 		sort.Slice(bars, func(i, j int) bool { return bars[i].LeftPct < bars[j].LeftPct })
-		lanes = append(lanes, lane{Agent: a, Bars: bars})
+		for i, row := range packRows(bars) {
+			// Only the first row carries the name: the rows below it are the same
+			// agent, not another one.
+			name := a
+			if i > 0 {
+				name = ""
+			}
+			lanes = append(lanes, lane{Agent: name, Bars: row})
+		}
 	}
 	return lanes
+}
+
+// packRows splits one agent's bars into as many rows as it takes for none of
+// them to overlap. Batched nodes share a process and therefore a span, and drawn
+// on one row they would hide each other - a timeline showing one bar where four
+// nodes ran would be worse than no timeline.
+func packRows(bars []bar) [][]bar {
+	var rows [][]bar
+	var ends []float64
+
+	for _, b := range bars {
+		placed := false
+		for i := range rows {
+			if b.LeftPct >= ends[i] {
+				rows[i] = append(rows[i], b)
+				ends[i] = b.LeftPct + b.WidthPct
+				placed = true
+				break
+			}
+		}
+		if !placed {
+			rows = append(rows, []bar{b})
+			ends = append(ends, b.LeftPct+b.WidthPct)
+		}
+	}
+	return rows
 }
 
 // buildTicks places a few labelled gridlines, so a bar's length can be read as
@@ -278,7 +316,7 @@ func clamp(pct float64) float64 {
 var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
-<title>playdag — {{.SuiteID}}</title>
+<title>playdag - {{.SuiteID}}</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1c1e21; --muted: #6b7280; --line: #e5e7eb;
@@ -334,7 +372,7 @@ var htmlTemplate = template.Must(template.New("report").Parse(`<!doctype html>
     {{if .Green}}<span class="verdict green">PASSED</span>
     {{else}}<span class="verdict red">FAILED</span>{{end}}
   </h1>
-  <p class="sub">{{.StartedAt}} → {{.FinishedAt}}</p>
+  <p class="sub">{{.StartedAt}} -> {{.FinishedAt}}</p>
 
   <div class="cards">
     <div class="card"><div class="n">{{.Total}}</div><div class="k">nodes</div></div>
