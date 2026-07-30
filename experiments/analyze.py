@@ -8,7 +8,7 @@ write-up needs.
 Reads <results-dir>/<config>_run_<n>.json, drops the warm-up run of each
 configuration, and reports for every comparison a Welch's t-test (the samples
 are not assumed to share a variance), Cohen's d for the size of the effect, and
-a 95% confidence interval for the difference — a p-value alone says an effect
+a 95% confidence interval for the difference - a p-value alone says an effect
 exists, not whether it is worth anything.
 """
 
@@ -36,8 +36,10 @@ WARMUP = 1
 CONFIG_LABELS = {
     "e1": "E1 baseline, 1 worker",
     "e1p": "E1p baseline, 4 workers",
+    "e1s": "E1s baseline, session login, 4 workers",
     "e2": "E2 playdag, 1 worker",
     "e3": "E3 playdag, 4 workers",
+    "e3b": "E3b playdag, batched, 4 workers",
     "e4": "E4 playdag, fail-fast, login broken",
     "e4b": "E4b baseline, login broken",
 }
@@ -141,7 +143,7 @@ def welch_ci(a: list[float], b: list[float], confidence: float = 0.95) -> tuple[
     if se == 0:
         return (ma - mb, ma - mb)
 
-    # Welch–Satterthwaite degrees of freedom.
+    # Welch-Satterthwaite degrees of freedom.
     df = (va / na + vb / nb) ** 2 / ((va / na) ** 2 / (na - 1) + (vb / nb) ** 2 / (nb - 1))
     t = stats.t.ppf(1 - (1 - confidence) / 2, df)
     diff = ma - mb
@@ -182,7 +184,7 @@ class Comparison:
 
 def amdahl_serial_fraction(sample_by_workers: dict[int, Sample]) -> float | None:
     """Estimates the serial fraction from the measured speedups, by the
-    Karp–Flatt metric. It is the honest ceiling on what more workers can buy:
+    Karp-Flatt metric. It is the honest ceiling on what more workers can buy:
     a suite whose graph is a chain has a serial fraction of 1 and cannot be
     made faster by adding agents."""
     t1 = sample_by_workers.get(1)
@@ -218,8 +220,8 @@ def summary_table(samples: dict[str, Sample]) -> str:
             f"{s.mean:.2f}",
             f"{s.stdev:.3f}",
             f"{s.cv:.1f}%",
-            f"{s.mean_worker_seconds:.2f}" if s.worker_seconds else "—",
-            f"{statistics.mean(s.passed):.0f}/{statistics.mean(s.total):.0f}" if s.passed else "—",
+            f"{s.mean_worker_seconds:.2f}" if s.worker_seconds else "-",
+            f"{statistics.mean(s.passed):.0f}/{statistics.mean(s.total):.0f}" if s.passed else "-",
         ])
     return table(rows, ["configuration", "n", "mean s", "stdev", "CV%", "worker-s", "passed"])
 
@@ -231,8 +233,8 @@ def comparison_table(results: list[dict]) -> str:
             r["comparison"],
             f'{r["a_mean_s"]:.2f}',
             f'{r["b_mean_s"]:.2f}',
-            f'{r["speedup"]:.2f}x' if r["speedup"] else "—",
-            f'{r["saved_percent"]:.1f}%' if r["saved_percent"] is not None else "—",
+            f'{r["speedup"]:.2f}x' if r["speedup"] else "-",
+            f'{r["saved_percent"]:.1f}%' if r["saved_percent"] is not None else "-",
             f'{r["welch_t"]:.2f}',
             f'{r["p_value"]:.2e}',
             "yes" if r["significant_005"] else "no",
@@ -242,11 +244,11 @@ def comparison_table(results: list[dict]) -> str:
     return table(rows, ["comparison", "A mean", "B mean", "speedup", "saved", "t", "p", "sig", "Cohen's d", "95% CI of saving"])
 
 
-def scaling_rows(samples: dict[str, Sample]) -> tuple[dict[int, Sample], list[list[str]]]:
+def scaling_rows(samples: dict[str, Sample], prefix: str = "s") -> tuple[dict[int, Sample], list[list[str]]]:
     by_workers = {}
     for cfg, s in samples.items():
-        if cfg.startswith("s") and cfg[1:].isdigit():
-            by_workers[int(cfg[1:])] = s
+        if cfg.startswith(prefix) and cfg[len(prefix):].isdigit():
+            by_workers[int(cfg[len(prefix):])] = s
 
     rows = []
     base = by_workers.get(1)
@@ -259,9 +261,22 @@ def scaling_rows(samples: dict[str, Sample]) -> tuple[dict[int, Sample], list[li
             f"{s.cv:.1f}%",
             f"{speedup:.2f}x",
             f"{speedup / w:.2f}",  # efficiency
-            f"{s.mean_worker_seconds:.2f}" if s.worker_seconds else "—",
+            f"{s.mean_worker_seconds:.2f}" if s.worker_seconds else "-",
         ])
     return by_workers, rows
+
+
+def e5_rows(playdag_by_workers: dict[int, Sample], xdist_by_workers: dict[int, Sample]) -> list[list[str]]:
+    """E5's actual question: does playdag's edge over an off-the-shelf
+    parallel baseline (B2/xdist, which pays its session-scoped login fixture
+    once PER WORKER) grow as worker count grows, since playdag's context
+    store pays that cost exactly once regardless of N."""
+    rows = []
+    for w in sorted(set(playdag_by_workers) & set(xdist_by_workers)):
+        p, x = playdag_by_workers[w], xdist_by_workers[w]
+        speedup = x.mean / p.mean if p.mean else float("nan")
+        rows.append([w, f"{x.mean:.2f}", f"{p.mean:.2f}", f"{speedup:.2f}x"])
+    return rows
 
 
 def plot(samples: dict[str, Sample], by_workers: dict[int, Sample], serial: float | None, out_dir: str) -> list[str]:
@@ -363,22 +378,42 @@ def main() -> int:
 
     comparisons = []
     if "e1" in samples and "e2" in samples:
-        comparisons.append(Comparison("E1 → E2", "what context sharing alone saves", samples["e1"], samples["e2"]))
+        comparisons.append(Comparison("E1 -> E2", "what context sharing alone saves", samples["e1"], samples["e2"]))
     if "e1" in samples and "e3" in samples:
-        comparisons.append(Comparison("E1 → E3", "the end-to-end claim: sharing plus parallelism", samples["e1"], samples["e3"]))
+        comparisons.append(Comparison("E1 -> E3", "the end-to-end claim: sharing plus parallelism", samples["e1"], samples["e3"]))
+    if "e1" in samples and "e1s" in samples:
+        comparisons.append(Comparison("E1 -> E1s", "what a shared login plus off-the-shelf parallel workers (pytest-xdist) saves on their own", samples["e1"], samples["e1s"]))
+    if "e1s" in samples and "e3" in samples:
+        comparisons.append(Comparison("E1s -> E3", "what playdag's DAG scheduling adds beyond an off-the-shelf parallel baseline that already shares login", samples["e1s"], samples["e3"]))
+    if "e3" in samples and "e3b" in samples:
+        comparisons.append(Comparison("E3 -> E3b", "what batching nodes into fewer framework processes adds on top of the DAG scheduler alone", samples["e3"], samples["e3b"]))
+    if "e1s" in samples and "e3b" in samples:
+        comparisons.append(Comparison("E1s -> E3b", "playdag at its best (DAG scheduling plus batching) against the off-the-shelf parallel baseline", samples["e1s"], samples["e3b"]))
     if "e1p" in samples and "e3" in samples:
-        comparisons.append(Comparison("E1p → E3", "orchestration at equal parallelism", samples["e1p"], samples["e3"]))
+        comparisons.append(Comparison("E1p -> E3", "orchestration at equal parallelism", samples["e1p"], samples["e3"]))
     if "e2" in samples and "e3" in samples:
-        comparisons.append(Comparison("E2 → E3", "what dynamic parallelism adds", samples["e2"], samples["e3"]))
+        comparisons.append(Comparison("E2 -> E3", "what dynamic parallelism adds", samples["e2"], samples["e3"]))
     if "e4b" in samples and "e4" in samples:
-        comparisons.append(Comparison("E4b → E4", "what fail-fast saves when a blocker breaks", samples["e4b"], samples["e4"]))
+        comparisons.append(Comparison("E4b -> E4", "what fail-fast saves when a blocker breaks", samples["e4b"], samples["e4"]))
+
+    # E5: xN (B2/xdist -n N) against sN (playdag -workers N), at every N both
+    # were measured at - whether playdag's one-time setup pulls further
+    # ahead of a baseline that repeats it per worker as N grows.
+    for cfg in sorted(samples):
+        if cfg.startswith("s") and cfg[1:].isdigit():
+            n = cfg[1:]
+            xcfg = f"x{n}"
+            if xcfg in samples:
+                comparisons.append(Comparison(f"x{n} -> s{n}", f"setup-duplication cost at {n} workers: off-the-shelf parallel baseline vs playdag", samples[xcfg], samples[cfg]))
 
     results = [c.result() for c in comparisons]
-    by_workers, sc_rows = scaling_rows(samples)
+    by_workers, sc_rows = scaling_rows(samples, "s")
+    xdist_by_workers, _ = scaling_rows(samples, "x")
     serial = amdahl_serial_fraction(by_workers)
+    e5_pair_rows = e5_rows(by_workers, xdist_by_workers)
 
     lines = ["# Experiment results", ""]
-    lines += [f"Measured runs per configuration: {min(s.n for s in samples.values())}–{max(s.n for s in samples.values())} "
+    lines += [f"Measured runs per configuration: {min(s.n for s in samples.values())}-{max(s.n for s in samples.values())} "
               f"(warm-up run dropped).", ""]
     lines += ["## Configurations", "", summary_table(samples), ""]
 
@@ -388,8 +423,8 @@ def main() -> int:
                   "and a 95% confidence interval for the saving.", "",
                   comparison_table(results), ""]
         for r in results:
-            lines.append(f"- **{r['comparison']}** — {r['question']}: "
-                         f"{r['a_mean_s']:.2f}s → {r['b_mean_s']:.2f}s, "
+            lines.append(f"- **{r['comparison']}** - {r['question']}: "
+                         f"{r['a_mean_s']:.2f}s -> {r['b_mean_s']:.2f}s, "
                          f"{r['saved_percent']:.1f}% saved, p = {r['p_value']:.2e}, d = {r['cohens_d']:.2f} ({r['effect']}).")
         lines.append("")
 
@@ -397,11 +432,18 @@ def main() -> int:
         lines += ["## Scaling", "",
                   table(sc_rows, ["agents", "mean s", "CV%", "speedup", "efficiency η", "worker-s"]), ""]
         if serial is not None:
-            lines.append(f"Serial fraction estimated from the measured speedups (Karp–Flatt): **{serial:.3f}**. "
+            lines.append(f"Serial fraction estimated from the measured speedups (Karp-Flatt): **{serial:.3f}**. "
                          f"By Amdahl's law that caps the speedup at {1/serial:.2f}x however many agents are added."
                          if serial > 0 else
                          "The measured speedups imply no serial bottleneck in this range.")
             lines.append("")
+
+    if e5_pair_rows:
+        lines += ["## E5 - setup duplication across workers", "",
+                  "B2 (xdist -n N) pays its session-scoped login fixture once per worker; playdag pays "
+                  "its context-store setup once regardless of N. This is xN vs sN at each measured N - "
+                  "if playdag's edge grows with N, that duplication cost is what's showing up.", "",
+                  table(e5_pair_rows, ["N", "xdist mean s", "playdag mean s", "playdag speedup"]), ""]
 
     figures = [] if args.no_plots else plot(samples, by_workers, serial, out_dir)
     if figures:
