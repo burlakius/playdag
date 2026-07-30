@@ -27,7 +27,7 @@ type Result struct {
 }
 
 // Executor runs one node and reports what the agent said. A returned error means
-// no usable result was obtained at all — the agent could not be started, was
+// no usable result was obtained at all - the agent could not be started, was
 // killed, or violated the protocol. A Result with StatusFailed means the agent
 // ran and reported a failure, which is a normal outcome.
 type Executor interface {
@@ -46,7 +46,7 @@ type Batcher interface {
 }
 
 // Names lists the executors New accepts, for CLI help and error messages.
-var Names = []string{"process", "playwright"}
+var Names = []string{"process", "playwright", "pytest"}
 
 // New builds the executor selected by name. baseDir resolves script paths and
 // baseURL points at the system under test.
@@ -56,6 +56,8 @@ func New(name, baseDir, baseURL string) (Executor, error) {
 		return NewProcess(baseDir, baseURL), nil
 	case "playwright":
 		return NewPlaywright(baseDir, baseURL), nil
+	case "pytest":
+		return NewPytest(baseDir, baseURL), nil
 	default:
 		return nil, fmt.Errorf("executor: unknown executor %q (want one of %v)", name, Names)
 	}

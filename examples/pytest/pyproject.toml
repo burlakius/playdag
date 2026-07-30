@@ -1,0 +1,9 @@
+[project]
+name = "playdag-example-pytest"
+version = "1.0.0"
+description = "Minimal pytest suite orchestrated by playdag"
+requires-python = ">=3.9"
+dependencies = ["playdag-pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -42,7 +42,7 @@ type Extractor interface {
 }
 
 // Names lists the extractors New accepts, for CLI help and error messages.
-var Names = []string{"process", "playwright"}
+var Names = []string{"process", "playwright", "pytest"}
 
 // New builds the extractor selected by name, reading tests under baseDir.
 func New(name, baseDir string) (Extractor, error) {
@@ -51,6 +51,8 @@ func New(name, baseDir string) (Extractor, error) {
 		return NewProcess(baseDir), nil
 	case "playwright":
 		return NewPlaywright(baseDir), nil
+	case "pytest":
+		return NewPytest(baseDir), nil
 	default:
 		return nil, fmt.Errorf("extractor: unknown extractor %q (want one of %v)", name, Names)
 	}
@@ -169,7 +171,7 @@ func editDistance(a, b string) int {
 }
 
 // checkGraph runs the real graph builder, so extraction rejects exactly what
-// execution would reject — a cycle above all.
+// execution would reject - a cycle above all.
 func checkGraph(nodes []Node) error {
 	testNodes := make([]loader.TestNode, len(nodes))
 	for i, n := range nodes {
