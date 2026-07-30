@@ -10,7 +10,7 @@ auth.login ──session.token──► card.create ──card.id──► card.
 
 `auth.login` is the only node that drives the login form. `card.create` and
 `card.move` restore the session from the context, so signing in happens once per
-run instead of once per test — the repeated work this orchestrator exists to
+run instead of once per test - the repeated work this orchestrator exists to
 remove.
 
 The [generic example](../process/README.md) runs the same graph with Python
@@ -63,8 +63,8 @@ test('create a card', playdagMeta({
 
 `suite.json` is generated from exactly these annotations by
 `orchestrator extract`, so it is a build artefact and is not committed. Nothing
-describes a node twice, and a broken contract — an unknown key, a key provided
-by two tests, a cycle — is an error at extraction time, pointing at the file and
+describes a node twice, and a broken contract - an unknown key, a key provided
+by two tests, a cycle - is an error at extraction time, pointing at the file and
 line that declared it.
 
 ## Artifacts

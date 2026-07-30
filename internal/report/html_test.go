@@ -79,11 +79,11 @@ func TestSaveHTML_IsSelfContained(t *testing.T) {
 func TestSaveHTML_BarsArePlacedOnTheTimeline(t *testing.T) {
 	out := renderHTML(t, timelineReport())
 
-	// auth.login: starts at 0s of 10s, runs 5s → left 0%, width 50%.
+	// auth.login: starts at 0s of 10s, runs 5s -> left 0%, width 50%.
 	if !strings.Contains(out, `style="left:0%;width:50%"`) {
 		t.Errorf("auth.login should span the first half:\n%s", out)
 	}
-	// card.create: starts at 5s, runs 3s → left 50%, width 30%.
+	// card.create: starts at 5s, runs 3s -> left 50%, width 30%.
 	if !strings.Contains(out, `style="left:50%;width:30%"`) {
 		t.Errorf("card.create should start halfway and run 30%%:\n%s", out)
 	}

@@ -83,7 +83,7 @@ export function readEnvelope(env: NodeJS.ProcessEnv = process.env): Envelope | n
 
 /**
  * The request for one test, matched by node id. A batch process runs several
- * tests and each must see only its own context — handing a test the whole batch
+ * tests and each must see only its own context - handing a test the whole batch
  * would defeat the contract that says what it is allowed to read.
  */
 export function requestFor(testId: string | undefined, env?: NodeJS.ProcessEnv): PlaydagRequest | null {

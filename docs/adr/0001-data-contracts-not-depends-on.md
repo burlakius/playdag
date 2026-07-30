@@ -7,8 +7,8 @@ Status: accepted
 The suite has to run in an order that works: a test that needs a session cannot
 run before the test that establishes one. Something must express that.
 
-The obvious way is to let a test name its predecessors — `depends_on:
-["auth.login"]` — which is what most pipeline tools do and what a reviewer
+The obvious way is to let a test name its predecessors - `depends_on:
+["auth.login"]` - which is what most pipeline tools do and what a reviewer
 expects to see.
 
 ## Decision
@@ -21,7 +21,7 @@ whoever provides `session.token` runs before whoever requires it.
 **A dependency cannot be wrong about itself.** `depends_on` is a claim about
 order that nothing checks: a test that stops needing the session keeps the edge
 until someone notices, and a test that starts needing one may forget to add it
-and pass for weeks on leftover state. `requires` is not a claim about order — it
+and pass for weeks on leftover state. `requires` is not a claim about order - it
 is what the test reads, and the test cannot run without it. The order is a
 consequence, and it cannot drift from the code.
 
@@ -37,7 +37,7 @@ a key nobody provides, a cycle: all of it is decidable from the declarations, so
 declared it. With `depends_on`, a name that no longer exists is just a name.
 
 **The cost:** the contract is more to write than a list of names, and a node
-that must run after another without exchanging anything — a cleanup, an audit —
+that must run after another without exchanging anything - a cleanup, an audit -
 has no key to hang the edge on. Such a node must publish a marker key
 (`card.archived`) to be ordered at all, which is honest but wordy.
 

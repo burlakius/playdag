@@ -38,7 +38,7 @@ type Cost struct {
 	// dependency graph, which is the cost the orchestration is meant to cut.
 	Utilization float64
 	// Cached counts nodes that did not run because a previous run had already
-	// produced their global values — the repeated setup that was skipped.
+	// produced their global values - the repeated setup that was skipped.
 	Cached int
 }
 
@@ -58,8 +58,8 @@ func Costs(r *Report) Cost {
 }
 
 const (
-	boxInner     = 54 // inner width of ╔═…═╗ border (columns)
-	sectionWidth = 57 // total columns for ── Title ─… lines
+	boxInner     = 54 // inner width of ╔═...═╗ border (columns)
+	sectionWidth = 57 // total columns for ── Title ─... lines
 )
 
 // Generate returns a formatted text report suitable for printing to stdout.
@@ -70,7 +70,7 @@ func Generate(r *Report) string {
 
 	// ── header ──────────────────────────────────────────────
 	fmt.Fprintf(&sb, "╔%s╗\n", border)
-	fmt.Fprintf(&sb, "║%-*s║\n", boxInner, "         PlayDAG — Execution Report")
+	fmt.Fprintf(&sb, "║%-*s║\n", boxInner, "         PlayDAG - Execution Report")
 	fmt.Fprintf(&sb, "╚%s╝\n", border)
 
 	fmt.Fprintf(&sb, "Suite:     %s\n", r.SuiteID)
@@ -146,7 +146,7 @@ func Generate(r *Report) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		cv := r.ContextSnapshot[k]
-		fmt.Fprintf(&sb, "%-20s → [provided by %s, scope: %s]\n", k, cv.ProvidedBy, cv.Scope)
+		fmt.Fprintf(&sb, "%-20s -> [provided by %s, scope: %s]\n", k, cv.ProvidedBy, cv.Scope)
 	}
 
 	// ── performance ──────────────────────────────────────────
@@ -172,17 +172,17 @@ func Generate(r *Report) string {
 	// ── footer ───────────────────────────────────────────────
 	fmt.Fprintf(&sb, "╔%s╗\n", border)
 	if failed > 0 {
-		msg := fmt.Sprintf("  Suite FAILED — %d test(s) did not pass", failed)
+		msg := fmt.Sprintf("  Suite FAILED - %d test(s) did not pass", failed)
 		fmt.Fprintf(&sb, "║%-*s║\n", boxInner, msg)
 	} else {
-		fmt.Fprintf(&sb, "║%-*s║\n", boxInner, "  Suite PASSED — all tests green")
+		fmt.Fprintf(&sb, "║%-*s║\n", boxInner, "  Suite PASSED - all tests green")
 	}
 	fmt.Fprintf(&sb, "╚%s╝\n", border)
 
 	return sb.String()
 }
 
-// section returns a "── Title ────…" header line.
+// section returns a "── Title ────..." header line.
 func section(title string) string {
 	// "── " is 2 box-drawing chars + space = 3 rune columns; title is ASCII.
 	prefixLen := 3 + len(title) + 1
@@ -194,7 +194,7 @@ func section(title string) string {
 }
 
 // SaveJSON serialises the report to a JSON file for downstream analysis. The
-// top-level aggregate fields (total_tests, passed, worker_seconds, …) are the
+// top-level aggregate fields (total_tests, passed, worker_seconds, ...) are the
 // ones consumed by the CI experiment scripts.
 func SaveJSON(r *Report, path string) error {
 	type nodeResult struct {

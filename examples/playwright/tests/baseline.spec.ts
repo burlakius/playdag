@@ -2,7 +2,7 @@ import { test, expect, Page } from '@playwright/test';
 
 /**
  * The baseline: the same three scenarios written the way Playwright is normally
- * used — every test independent and responsible for its own state, so every test
+ * used - every test independent and responsible for its own state, so every test
  * signs in again, and the card test creates a card the move test then creates a
  * second time.
  *

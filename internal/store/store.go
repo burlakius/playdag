@@ -116,7 +116,7 @@ func (s *ContextStore) Get(key string) (string, bool) {
 	return cv.Value, ok
 }
 
-// Collect resolves every key as seen from session, returning a key→value map.
+// Collect resolves every key as seen from session, returning a key->value map.
 // A value the session owns wins over a shared one of the same name. It returns
 // an error on the first key that is not visible.
 func (s *ContextStore) Collect(keys []string, session string) (map[string]string, error) {

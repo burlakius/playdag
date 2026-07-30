@@ -24,7 +24,7 @@ const (
 // DAG holds the dependency graph and runtime state for a test suite.
 type DAG struct {
 	nodes    map[string]*loader.TestNode
-	edges    map[string][]string // node_id → dependant node_ids
+	edges    map[string][]string // node_id -> dependant node_ids
 	inDegree map[string]int
 	status   map[string]NodeStatus
 	mu       sync.RWMutex
@@ -49,7 +49,7 @@ func NewDAG(nodes []loader.TestNode) (*DAG, error) {
 		d.status[n.TestID] = StatusPending
 	}
 
-	// Build a map from provided key → node_id that produces it. A key may have
+	// Build a map from provided key -> node_id that produces it. A key may have
 	// exactly one provider; a collision means the suite is ambiguous.
 	providers := make(map[string]string)
 	for _, n := range nodes {
@@ -61,7 +61,7 @@ func NewDAG(nodes []loader.TestNode) (*DAG, error) {
 		}
 	}
 
-	// Wire edges: for each required key, add an edge from provider → consumer.
+	// Wire edges: for each required key, add an edge from provider -> consumer.
 	for _, n := range nodes {
 		for _, key := range n.Contract.Requires {
 			providerID, ok := providers[key]

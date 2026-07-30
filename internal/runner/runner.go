@@ -1,6 +1,6 @@
 // Package runner orchestrates DAG execution by dispatching test nodes to an
 // executor and wiring context through the shared store. It owns the execution
-// policy — retries, timeouts, ordering — and knows nothing about what actually
+// policy - retries, timeouts, ordering - and knows nothing about what actually
 // runs a test.
 package runner
 
@@ -43,12 +43,12 @@ type AgentResult struct {
 
 // RunOptions configures runner behaviour.
 type RunOptions struct {
-	MaxConcurrency int                // 0 → 64 (effectively unlimited for test suites)
+	MaxConcurrency int                // 0 -> 64 (effectively unlimited for test suites)
 	JSONLog        bool               // emit one JSON object per log event instead of text
 	Executor       executor.Executor  // runs a single node; required
-	Agents         []*scheduler.Agent // explicit agent pool; empty → MaxConcurrency universal agents
+	Agents         []*scheduler.Agent // explicit agent pool; empty -> MaxConcurrency universal agents
 	FailFast       bool               // stop the run as soon as a BLOCKER node fails
-	MaxFailures    int                // stop after this many failures; 0 → no limit
+	MaxFailures    int                // stop after this many failures; 0 -> no limit
 
 	// BatchSize is how many ready nodes one agent may run in a single process,
 	// when the executor supports it. 0 or 1 gives a process per node.
@@ -299,7 +299,7 @@ func (r *Runner) push(node *loader.TestNode) {
 
 // satisfied reports whether a node has nothing left to do: it declares global
 // scope and every key it provides is already in the store, carried over from a
-// previous run. Doing the work again would only overwrite the same values —
+// previous run. Doing the work again would only overwrite the same values -
 // this is the repeated setup the global scope exists to pay for once.
 func (r *Runner) satisfied(node *loader.TestNode) bool {
 	if node.Contract.Scope != store.ScopeGlobal || len(node.Contract.Provides) == 0 {

@@ -62,7 +62,7 @@ func (e *PlaywrightExecutor) Run(ctx context.Context, node *loader.TestNode, in 
 }
 
 // RunBatch executes one attempt of every node in a single Playwright process.
-// This is where the framework startup — which dominates a short test — is paid
+// This is where the framework startup - which dominates a short test - is paid
 // once instead of once per node.
 func (e *PlaywrightExecutor) RunBatch(ctx context.Context, nodes []*loader.TestNode, ins []Input) ([]Result, error) {
 	reqs := make([]protocol.Request, len(nodes))
@@ -123,7 +123,7 @@ func (e *PlaywrightExecutor) invoke(ctx context.Context, args []string, payload 
 		return nil, nil, fmt.Errorf("playwright: create result file: %w", err)
 	}
 	// The reporter writes this file; we only needed its name. Removing it is
-	// best effort — the run has already produced its result by then.
+	// best effort - the run has already produced its result by then.
 	defer func() { _ = os.Remove(resultPath) }()
 
 	cmd := exec.CommandContext(ctx, "npx", args...)
@@ -153,7 +153,7 @@ func resultOf(resp protocol.Response) Result {
 
 // playwrightArgs builds the npx invocation for a group of nodes. Retries are
 // pinned off: the orchestrator owns the retry policy, and a Playwright-level
-// retry would run a node twice behind its back. So is parallelism — one agent is
+// retry would run a node twice behind its back. So is parallelism - one agent is
 // one worker, and letting Playwright fan out inside a batch would make the
 // orchestrator's own concurrency figure a fiction.
 func playwrightArgs(nodes []*loader.TestNode) []string {

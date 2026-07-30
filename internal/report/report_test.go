@@ -63,7 +63,7 @@ func TestGenerate_AnyFailed_Footer(t *testing.T) {
 
 func TestGenerate_SpeedupCalculation(t *testing.T) {
 	r := baseReport()
-	// sequential = 10s, actual = 4s → 2.50x
+	// sequential = 10s, actual = 4s -> 2.50x
 	r.Results = map[string]runner.AgentResult{
 		"a": {Status: "PASSED", Duration: 6 * time.Second},
 		"b": {Status: "PASSED", Duration: 4 * time.Second},

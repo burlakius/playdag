@@ -1,7 +1,7 @@
 # Generic example: agents without a test framework
 
 The same orchestrator, the same DAG, and the same context flow as the
-[Playwright example](../playwright/README.md) — but the agents here are plain
+[Playwright example](../playwright/README.md) - but the agents here are plain
 Python scripts calling an HTTP API. No browser and no test framework is
 involved, which is the point: the core knows only the
 [protocol](../../docs/PROTOCOL.md).

@@ -16,7 +16,7 @@ const killGrace = 5 * time.Second
 // A test agent is usually a launcher: npx spawns node, which spawns Playwright,
 // which spawns a browser. Killing the child alone orphans the browser, which
 // keeps holding the session and the CI machine's memory long after the run
-// decided to stop — the cost that cancelling was supposed to avoid.
+// decided to stop - the cost that cancelling was supposed to avoid.
 func killGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

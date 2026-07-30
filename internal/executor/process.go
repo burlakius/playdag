@@ -20,7 +20,7 @@ const stderrLimit = 500
 
 // ProcessExecutor runs a node as a subprocess that speaks the playdag protocol:
 // the request arrives on stdin (and in PLAYDAG_CONTEXT), the response is read
-// from stdout. It is the generic adapter — the agent may be written in any
+// from stdout. It is the generic adapter - the agent may be written in any
 // language.
 type ProcessExecutor struct {
 	baseDir string

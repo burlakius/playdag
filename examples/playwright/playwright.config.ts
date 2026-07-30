@@ -14,7 +14,7 @@ export default defineConfig({
   },
   // No webServer here on purpose: nodes run in separate processes, so a server
   // owned by one of them would be killed after that node and take the session
-  // with it. The system under test is started once, outside the run — as it
+  // with it. The system under test is started once, outside the run - as it
   // would be in CI. See README.md.
   projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
 });

@@ -3,8 +3,8 @@
 
     python3 experiments/sensitivity.py <results-dir> [-o <output-dir>]
 
-Reads the runs written by sensitivity.sh — the baseline and the orchestrated
-suite measured against the same application at several login costs — and reports
+Reads the runs written by sensitivity.sh - the baseline and the orchestrated
+suite measured against the same application at several login costs - and reports
 the crossing point: the cost of the repeated operation above which sharing it
 wins.
 """
@@ -25,7 +25,7 @@ WARMUP = 1
 
 
 def load(results_dir: str) -> dict[int, dict[str, list[float]]]:
-    """Returns login-cost → {"baseline": [...], "playdag": [...]}."""
+    """Returns login-cost -> {"baseline": [...], "playdag": [...]}."""
     by_delay: dict[int, dict[str, list[float]]] = {}
 
     for path in sorted(glob.glob(os.path.join(results_dir, "*_run_*.json"))):

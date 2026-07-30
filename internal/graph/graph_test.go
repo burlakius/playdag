@@ -235,7 +235,7 @@ func TestNewDAG_MissingKey(t *testing.T) {
 	}
 }
 
-// exportDAG builds the example shape: login → create → move, with move also
+// exportDAG builds the example shape: login -> create -> move, with move also
 // depending on the login directly.
 func exportDAG(t *testing.T) *DAG {
 	t.Helper()

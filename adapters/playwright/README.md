@@ -8,7 +8,7 @@ It provides two pieces:
 
 - a **fixture** (`playdag`) that injects the context an earlier node produced and
   publishes the values this node promises;
-- a **reporter** that reports the node's outcome — status, provides, artifacts —
+- a **reporter** that reports the node's outcome - status, provides, artifacts -
   back to the orchestrator in the protocol format.
 
 ## Install
@@ -70,4 +70,4 @@ orchestrator passes the context in `PLAYDAG_CONTEXT` and reads the reporter's
 response from the file named by `PLAYDAG_RESULT`; both are set for you.
 
 The fixture also works without the orchestrator, so `npx playwright test` still
-runs and debugs a spec directly — `playdag.get` simply finds no context there.
+runs and debugs a spec directly - `playdag.get` simply finds no context there.

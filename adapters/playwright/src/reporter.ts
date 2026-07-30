@@ -69,7 +69,7 @@ function responseOf(test: TestCase, result: TestResult): PlaydagResponse {
  * The response goes to the file named by PLAYDAG_RESULT, keeping it clear of
  * everything Playwright prints on stdout. Its shape mirrors the request: a
  * single node answers with one response, a batch answers with a map keyed by
- * node id, and every node asked for is answered — a node that never ran is
+ * node id, and every node asked for is answered - a node that never ran is
  * reported as such rather than left out.
  */
 export default class PlaydagReporter implements Reporter {

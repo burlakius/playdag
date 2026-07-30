@@ -24,7 +24,7 @@ type fakeExecutor struct {
 	mu        sync.Mutex
 	results   map[string]executor.Result
 	errs      map[string]error
-	failUntil map[string]int // test_id → attempt number that finally passes
+	failUntil map[string]int // test_id -> attempt number that finally passes
 	seen      map[string]map[string]string
 	attempts  map[string]int
 }
@@ -228,7 +228,7 @@ type blockingExecutor struct {
 	release chan struct{}
 	mu      sync.Mutex
 	results map[string]executor.Result
-	ctxErr  map[string]error // test_id → the context error the node saw
+	ctxErr  map[string]error // test_id -> the context error the node saw
 }
 
 func newBlocking() *blockingExecutor {
@@ -698,7 +698,7 @@ func TestRun_NodesAreStampedOnTheTimeline(t *testing.T) {
 	for _, id := range []string{"a", "b"} {
 		res := r.Results()[id]
 		if res.StartedAt.Before(before) || res.FinishedAt.After(after) {
-			t.Errorf("%s ran outside the run: %s → %s", id, res.StartedAt, res.FinishedAt)
+			t.Errorf("%s ran outside the run: %s -> %s", id, res.StartedAt, res.FinishedAt)
 		}
 		if res.FinishedAt.Before(res.StartedAt) {
 			t.Errorf("%s finished before it started", id)

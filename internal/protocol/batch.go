@@ -7,8 +7,8 @@ import (
 )
 
 // BatchRequest asks an agent to run several nodes in one process. The nodes in
-// it are independent of each other — the orchestrator only ever batches nodes
-// that are ready at the same moment — so the agent may run them in any order.
+// it are independent of each other - the orchestrator only ever batches nodes
+// that are ready at the same moment - so the agent may run them in any order.
 type BatchRequest struct {
 	SchemaVersion string    `json:"schema_version"`
 	Tests         []Request `json:"tests"`

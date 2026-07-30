@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// agentDir writes agent scripts into a temp tree: name → file body.
+// agentDir writes agent scripts into a temp tree: name -> file body.
 func agentDir(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
