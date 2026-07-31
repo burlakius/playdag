@@ -40,6 +40,7 @@ type pytestNode struct {
 	Provides    []string `json:"provides"`
 	Criticality string   `json:"criticality"`
 	Priority    int      `json:"priority"`
+	Weight      int      `json:"weight"`
 	Retries     int      `json:"retries"`
 	Timeout     string   `json:"timeout"`
 	RetryDelay  string   `json:"retry_delay"`
@@ -103,6 +104,7 @@ func (e *PytestExtractor) nodeOf(n pytestNode) Node {
 				Criticality: criticality(n.Criticality),
 				Retries:     n.Retries,
 				Priority:    n.Priority,
+				Weight:      n.Weight,
 				Timeout:     n.Timeout,
 				RetryDelay:  n.RetryDelay,
 				Backoff:     n.Backoff,

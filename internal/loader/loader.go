@@ -37,9 +37,18 @@ type ExecutionPolicy struct {
 	Criticality string `json:"criticality"`
 	Retries     int    `json:"retries"`
 	Priority    int    `json:"priority"`
-	Timeout     string `json:"timeout"`
-	RetryDelay  string `json:"retry_delay,omitempty"` // wait before a retry, e.g. "2s"
-	Backoff     string `json:"backoff,omitempty"`     // "" or "fixed" (constant delay), or "exponential"
+	// Weight is an optional hint that this node is expected to take
+	// longer to execute than an untagged one (e.g. it drives a real
+	// browser rather than just an API call). Ready nodes are ordered by
+	// Priority first, then by Weight (both descending) before falling
+	// back to critical-path length and test id — scheduling
+	// longer-running nodes earlier gives them the most time to overlap
+	// with everything else, instead of landing arbitrarily and becoming
+	// a serial tail on the run. See internal/scheduler's priorityQueue.
+	Weight     int    `json:"weight"`
+	Timeout    string `json:"timeout"`
+	RetryDelay string `json:"retry_delay,omitempty"` // wait before a retry, e.g. "2s"
+	Backoff    string `json:"backoff,omitempty"`     // "" or "fixed" (constant delay), or "exponential"
 }
 
 // ResourceConstraints restricts which runner tags may execute the node.

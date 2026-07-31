@@ -60,6 +60,7 @@ func (s *Scheduler) Push(node *loader.TestNode, affinity string) {
 	heap.Push(&s.pq, &item{
 		node:     node,
 		priority: node.Policy.Priority,
+		weight:   node.Policy.Weight,
 		critPath: s.critPath[node.TestID],
 		affinity: affinity,
 	})
@@ -162,13 +163,24 @@ func (s *Scheduler) PendingTags() []string {
 type item struct {
 	node     *loader.TestNode
 	priority int
+	weight   int
 	critPath int
 	affinity string // agent that must run this node, or empty for any
 }
 
-// priorityQueue orders items by priority (desc), then critical-path length
-// (desc), then test id (asc). The final key makes the order total, which is
-// what keeps execution reproducible between runs.
+// priorityQueue orders items by priority (desc), then weight (desc), then
+// critical-path length (desc), then test id (asc). The final key makes the
+// order total, which is what keeps execution reproducible between runs.
+//
+// Weight sits right after the user's own declared priority: scheduling
+// nodes expected to run long (weight > 0) ahead of untagged ones is a
+// Longest-Processing-Time-first heuristic — it gives them the most
+// remaining time to overlap with everything else. Confirmed live (E6
+// batched runs on the Vikunja suite): without this, whether a slow,
+// browser-driven batch happened to be dispatched early or late in the run
+// was essentially down to scheduling luck, and that alone produced a
+// bimodal wall-clock distribution — some runs ~30% faster than others on
+// the identical corpus, batch size and worker count.
 type priorityQueue []*item
 
 func (pq priorityQueue) Len() int { return len(pq) }
@@ -177,6 +189,9 @@ func (pq priorityQueue) Less(i, j int) bool {
 	a, b := pq[i], pq[j]
 	if a.priority != b.priority {
 		return a.priority > b.priority
+	}
+	if a.weight != b.weight {
+		return a.weight > b.weight
 	}
 	if a.critPath != b.critPath {
 		return a.critPath > b.critPath
